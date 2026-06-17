@@ -1,14 +1,13 @@
-// Package main is the entry point for the ViewRed binary.
-//
-// ViewRed is a network detection & response tool with local AI.
 package main
 
 import (
 	"fmt"
+	"log"
 	"os"
+
+	"github.com/viewred/viewred/internal/api"
 )
 
-// Version is the semantic version of this build, set via -ldflags at build time.
 var Version = "0.1.0-dev"
 
 func main() {
@@ -16,5 +15,16 @@ func main() {
 		fmt.Printf("viewred %s\n", Version)
 		return
 	}
-	fmt.Printf("ViewRed %s — bootstrap stub. Real implementation comes in plan 2.\n", Version)
+
+	addr := os.Getenv("VIEWRED_ADDR")
+	if addr == "" {
+		addr = "127.0.0.1:8080"
+	}
+
+	router := api.NewRouter()
+	log.Printf("ViewRed %s listening on http://%s", Version, addr)
+
+	if err := router.Run(addr); err != nil {
+		log.Fatalf("server failed: %v", err)
+	}
 }
