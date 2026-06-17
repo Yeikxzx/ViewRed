@@ -36,6 +36,9 @@ ai:
 	assert.Equal(t, 9000, cfg.Server.Port)
 	assert.Equal(t, "http://gpu-box.lan:11434", cfg.AI.OllamaURL)
 	assert.Equal(t, "qwen2.5:7b", cfg.AI.OllamaModel)
+	assert.Equal(t, 5, cfg.Scanner.MaxConcurrentScans)
+	assert.Equal(t, 0.85, cfg.AI.MLAnomalyThreshold)
+	assert.Equal(t, 600, cfg.Scanner.ScanTimeoutSeconds)
 }
 
 func TestLoadInvalidYAMLReturnsError(t *testing.T) {

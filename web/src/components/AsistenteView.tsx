@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Sparkles, Send, Bot, User, Trash2, ArrowRight } from 'lucide-react';
 import { ChatMessage, NetworkAlert, Vulnerability } from '../types';
-import { llm, type Message } from '../lib/llm';
+import { llm } from '../lib/llm';
 
 interface AsistenteViewProps {
   chatHistory: ChatMessage[];
