@@ -1,0 +1,46 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Go
+/bin/
+/dist/
+/viewred
+/viewred.exe
+*.test
+*.out
+coverage.txt
+
+# Node / Vite
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# ViewRed runtime data
+data/
+*.pcap
+*.pcap.gz
+
+# Secrets — never commit
+**/.env
+**/secrets/
+*.key
+*.pem
+
+# Build artifacts
+web/dist/
+web/node_modules/
