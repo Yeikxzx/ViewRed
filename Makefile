@@ -19,7 +19,7 @@ else
 	EXE_EXT :=
 endif
 
-.PHONY: help build build-all test test-go test-web dev clean lint
+.PHONY: help build build-all test test-go test-web dev dev-backend dev-web clean lint
 
 help:
 	@echo "ViewRed $(VERSION) — make targets:"
