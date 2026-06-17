@@ -1,0 +1,25 @@
+# Local dev database for ViewRed.
+# Usage: docker compose -f deploy/docker-compose.dev.yml up -d
+# Note: requires Docker. If you don't have Docker, install PostgreSQL+TimescaleDB
+# natively and create a database called "viewred" with user "viewred".
+
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg15
+    container_name: viewred-postgres
+    environment:
+      POSTGRES_DB: viewred
+      POSTGRES_USER: viewred
+      POSTGRES_PASSWORD: viewred_dev_only
+    ports:
+      - "5432:5432"
+    volumes:
+      - viewred-pgdata:/home/postgres/pgdata/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U viewred"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  viewred-pgdata:
