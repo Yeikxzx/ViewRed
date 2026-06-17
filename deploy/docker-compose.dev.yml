@@ -14,7 +14,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - viewred-pgdata:/home/postgres/pgdata/data
+      - viewred-pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U viewred"]
       interval: 5s
