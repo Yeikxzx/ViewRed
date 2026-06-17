@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install web dependencies
+        run: |
+          cd web
+          npm install
+
+      - name: Run Go tests
+        run: go test ./...
+
+      - name: Run web tests
+        run: |
+          cd web
+          npm test
+
+      - name: Build (linux/amd64)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          GOOS=linux GOARCH=amd64 go build -o dist/viewred-linux-amd64 ./cmd/viewred
+
+      - name: Build (windows/amd64)
+        if: matrix.os == 'windows-latest'
+        run: |
+          GOOS=windows GOARCH=amd64 go build -o dist/viewred-windows-amd64.exe ./cmd/viewred
