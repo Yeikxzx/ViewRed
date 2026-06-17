@@ -22,19 +22,24 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.25'
           cache: true
 
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
 
       - name: Install web dependencies
         run: |
           cd web
-          npm install
+          pnpm install --frozen-lockfile
 
       - name: Run Go tests
         run: go test ./...
@@ -42,7 +47,7 @@ jobs:
       - name: Run web tests
         run: |
           cd web
-          npm test
+          pnpm test
 
       - name: Build (linux/amd64)
         if: matrix.os == 'ubuntu-latest'
