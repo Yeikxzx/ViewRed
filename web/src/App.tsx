@@ -11,6 +11,7 @@ import AsistenteView from './components/AsistenteView';
 import ConfiguracionView from './components/ConfiguracionView';
 
 import { ViewType, NetworkAlert, Vulnerability, ChatMessage } from './types';
+import { llm, type Message } from './lib/llm';
 import {
   initialAlerts,
   initialDevices,
@@ -66,40 +67,36 @@ export default function App() {
     ]);
   };
 
-  const handleSendMessage = (content: string) => {
+  const handleSendMessage = async (content: string) => {
     const userMsg: ChatMessage = {
       id: Date.now(),
       sender: 'admin',
       content,
     };
-    setChatHistory((prev) => [...prev, userMsg]);
+    const updatedHistory: ChatMessage[] = [...chatHistory, userMsg];
+    setChatHistory(updatedHistory);
 
-    // Simulate an incredibly rich technical bot reply with realistic latency
-    setTimeout(() => {
-      let replyContent = '';
-      const query = content.toLowerCase();
+    const messages: Message[] = updatedHistory.map((msg) => ({
+      role: msg.sender === 'admin' ? 'user' : 'assistant',
+      content: msg.content,
+    }));
 
-      if (query.includes('resumen') || query.includes('24h')) {
-        replyContent = `[REPORTE CONTEXTUAL VIEWRED SEC-OPS]\n\nDurante las últimas 24 horas, la sonda de captura pcap ha registrado:\n- Tráfico acumulado: 45.2 GB\n- Paquetes totales: 14.5M\n- Alertas IDS: 3 críticas (vulnerabilidades LDAP y escaneo de puertos).\n\nHost con mayor throughput: web-srv-prod (192.168.1.10) con una tasa promedio de 85 Mbps. Se recomienda auditar los CVEs expuestos en este Endpoint ya que contiene riesgos lógicos no mitigados (CVE-2021-44228).`;
-      } else if (query.includes('anómalo') || query.includes('trafico') || query.includes('tráfico')) {
-        replyContent = `[ANÁLISIS DE ANOMALÍAS DE RED]\n\nSe han detectado comportamientos fuera de perfil en la interfaz para:\n1. Host: 192.168.1.100 (replica-db-srv)\n   - Tipo: Conexión persistente anómala LDAP a puerto no estándar.\n   - Clasificación catastrófica Suricata: Alta.\n2. Host: 10.0.5.12 (api-gateway)\n   - Tipo: Ráfagas repetitivas indicativas de HTTP/2 Rapid Reset.\n\nAmbas conexiones han sido registradas en la cola de Alertas de Seguridad. ¿Desea que simulemos un bloqueo preventivo?`;
-      } else if (query.includes('vulnerabilidades') || query.includes('cve') || query.includes('críticas')) {
-        replyContent = `[AUDITORÍA DE RIESGO DE DISPOSITIVIVOS]\n\nEstado de la superficie de ataque:\n- CVE-2021-44228 (Log4Shell, CVSS 10.0): Activo en web-srv-prod. Permite ejecución remota de binarios maliciosos.\n- CVE-2023-44487 (HTTP/2 Rapid Reset, CVSS 7.5): Activo en api-gateway. Riesgo moderado de DoS.\n\nAcción recomendada: Navegue a la pestaña 'Vulnerabilidades', seleccione el host expuesto y presione 'Mitigar Riesgo' para simular el despliegue de parches del kernel.`;
-      } else if (query.includes('alerta') || query.includes('analiza')) {
-        replyContent = `[ANÁLISIS DE FIRMA SURICATA]\n\nAnalizando la incidencia de seguridad reportada:\n- Identificador: ${
-          alerts[0]?.id || 'AL-512'
-        }\n- Firma principal: LDAP Remote Command Injection Attempt\n- Nivel de Confianza: 98%\n- Mitigación sugerida: Bloquear el tráfico entrante de la IP remota o actualizar el middleware LDAP vulnerable.`;
-      } else {
-        replyContent = `[SOPORTE DE RED VIEWRED]\n\nHe recibido su consulta técnica: "${content}".\n\nComo modelo de IA SecOps, he analizado los metadatos pcap activos y no encuentro anomalías severas adicionales asociadas a esos parámetros. Los routers internos reportan estabilidad total y cero paquetes descartados por buffers de memoria. \n\n¿Desea iniciar una sonda de escaneo Nmap en la topologia para encontrar puertos vulnerables abiertos en el sub-segmento?`;
-      }
-
+    try {
+      const replyContent = await llm.chat(messages);
       const botMsg: ChatMessage = {
         id: Date.now() + 1,
         sender: 'bot',
         content: replyContent,
       };
       setChatHistory((prev) => [...prev, botMsg]);
-    }, 800);
+    } catch (err) {
+      const botMsg: ChatMessage = {
+        id: Date.now() + 1,
+        sender: 'bot',
+        content: `[Error] No se pudo contactar al modelo: ${err}`,
+      };
+      setChatHistory((prev) => [...prev, botMsg]);
+    }
   };
 
   const activeAlertCount = alerts.filter((a) => !a.acknowledged).length;

@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Sparkles, Send, Bot, User, Trash2, ArrowRight } from 'lucide-react';
 import { ChatMessage, NetworkAlert, Vulnerability } from '../types';
+import { llm, type Message } from '../lib/llm';
 
 interface AsistenteViewProps {
   chatHistory: ChatMessage[];
@@ -18,6 +19,11 @@ export default function AsistenteView({
   onClearExplainedAlert,
 }: AsistenteViewProps) {
   const [inputValue, setInputValue] = useState('');
+  const [llmAvailable, setLlmAvailable] = useState(false);
+
+  useEffect(() => {
+    llm.isAvailable().then(setLlmAvailable);
+  }, []);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -63,8 +69,8 @@ export default function AsistenteView({
             <span className="font-sans font-bold text-xs text-[#e4e7eb]">
               Asistente de Inteligencia ViewRed
             </span>
-            <span className="font-mono text-[9px] text-[#10b981] uppercase tracking-wider">
-              Modelo Activo: Qwen 2.5 (3B Local) • CONECTADO
+            <span className={`font-mono text-[9px] uppercase tracking-wider ${llmAvailable ? 'text-[#10b981]' : 'text-[#f59e0b]'}`}>
+              Modelo Activo: Qwen 2.5 (3B Local) • {llmAvailable ? 'CONECTADO' : 'MOCK'}
             </span>
           </div>
         </div>
