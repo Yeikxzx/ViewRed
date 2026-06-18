@@ -177,3 +177,67 @@ func (s *Storage) QueryTopTalkers(ctx context.Context, since time.Time, limit in
 	}
 	return talkers, nil
 }
+
+// QueryProtocolDistribution — design constraints (see plan §Task 7
+// and docs/superpowers/designs/2026-06-18-core-api-and-ui-shell.md §3):
+//
+//   - Aggregate bytes per protocol and return each protocol's
+//     percentage share of the total. The donut chart in the dashboard
+//     renders this directly.
+//   - The percentage is computed in SQL with a window-function total
+//     (SUM(SUM(length)) OVER ()) so it stays accurate as the row set
+//     changes. The arithmetic is done once in the database rather
+//     than in Go to avoid an N+1 round-trip (one COUNT query plus N
+//     per-protocol queries would defeat the purpose of having SQL).
+//   - NULLIF guards the divisor: when the time window is empty the
+//     inner SUM is 0 and the divisor becomes NULL, so the percentage
+//     is NULL too. The handler/GROUP BY still emits zero rows in that
+//     case (no rows to group), so the guard is belt-and-braces for
+//     the edge case where SQL reports one row with SUM=0.
+//   - The result slice is empty (not nil) when no rows match so the
+//     JSON encoder emits "[]" and the dashboard client doesn't have
+//     to special-case null.
+//   - The query filters by `time >= $1` so TimescaleDB can prune
+//     chunks. Dropping the predicate would do a full hypertable scan
+//     on every poll.
+const qProtocolDistribution = `
+SELECT protocol,
+       (SUM(length) * 100.0 / NULLIF(SUM(SUM(length)) OVER (), 0))::float8 AS percent
+FROM packets
+WHERE time >= $1
+GROUP BY protocol
+ORDER BY SUM(length) DESC
+`
+
+// QueryProtocolDistribution returns the share of total bytes each
+// protocol contributes in the window [since, now). The shares are
+// sorted by bytes descending so the donut chart can render the
+// largest slice first. An empty window produces an empty (non-nil)
+// slice and a nil error, per the spec.
+func (s *Storage) QueryProtocolDistribution(ctx context.Context, since time.Time) ([]ProtocolShare, error) {
+	if s.db == nil {
+		return nil, errStorageNotInitialized
+	}
+
+	rows, err := s.db.QueryContext(ctx, qProtocolDistribution, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Pre-allocate an empty slice (not nil) so JSON encodes "[]" when
+	// the time window has no rows. The dashboard client can then
+	// render an empty ring without a nil-dereference check.
+	shares := make([]ProtocolShare, 0)
+	for rows.Next() {
+		var ps ProtocolShare
+		if err := rows.Scan(&ps.Protocol, &ps.Percent); err != nil {
+			return nil, err
+		}
+		shares = append(shares, ps)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return shares, nil
+}

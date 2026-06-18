@@ -33,6 +33,11 @@ func TestStorage_HasQueryTopTalkers(t *testing.T) {
 	_ = s.QueryTopTalkers
 }
 
+func TestStorage_HasQueryProtocolDistribution(t *testing.T) {
+	var s *Storage
+	_ = s.QueryProtocolDistribution
+}
+
 // newMockStorage wires a *Storage around a sqlmock-backed *sql.DB so we
 // can exercise the query methods without a real database. The pool and
 // healthy fields are left at their zero values because none of the
@@ -338,5 +343,148 @@ func TestQueryTopTalkers_SQLHasTimeFilter(t *testing.T) {
 	const want = "WHERE time >= $1"
 	if !strings.Contains(qTopTalkers, want) {
 		t.Errorf("top talkers SQL must contain %q\nGot:\n%s", want, qTopTalkers)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// QueryProtocolDistribution
+//
+// Aggregates bytes per protocol in the time window and returns each
+// protocol's percentage share of the total. The contract is:
+//
+//   - The result slice is empty (not nil) when the time window has no
+//     rows, so the dashboard donut chart renders an empty ring rather
+//     than crashing on a nil dereference.
+//   - The percentage is a float64 in [0, 100]. The full set of
+//     percentages sums to ~100 (rounding tolerated).
+//   - The SQL groups by protocol and filters by `time >= $1` so
+//     TimescaleDB can prune chunks.
+//   - DB errors propagate so the HTTP handler can map them to 503.
+// ---------------------------------------------------------------------------
+
+// Happy path: the SQL returns three rows (TCP, UDP, ICMP) with their
+// respective shares of the total bytes. The method must scan them
+// into ProtocolShare values preserving the float64 precision and the
+// protocol-name column. We do not assert a specific order here — the
+// SQL's ORDER BY SUM(length) DESC is verified separately.
+func TestQueryProtocolDistribution_ReturnsDistribution(t *testing.T) {
+	s, mock, cleanup := newMockStorage(t)
+	defer cleanup()
+
+	rows := sqlmock.NewRows([]string{"protocol", "percent"}).
+		AddRow("TCP", 65.5).
+		AddRow("UDP", 30.0).
+		AddRow("ICMP", 4.5)
+
+	mock.ExpectQuery(qProtocolDistribution).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnRows(rows)
+
+	got, err := s.QueryProtocolDistribution(context.Background(), time.Now().Add(-60*time.Second))
+	if err != nil {
+		t.Fatalf("QueryProtocolDistribution: unexpected error: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 protocol shares, got %d (%+v)", len(got), got)
+	}
+
+	want := map[string]float64{"TCP": 65.5, "UDP": 30.0, "ICMP": 4.5}
+	for _, ps := range got {
+		w, ok := want[ps.Protocol]
+		if !ok {
+			t.Errorf("unexpected protocol in result: %q", ps.Protocol)
+			continue
+		}
+		if ps.Percent != w {
+			t.Errorf("protocol %q: got percent %v, want %v", ps.Protocol, ps.Percent, w)
+		}
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet sqlmock expectations: %v", err)
+	}
+}
+
+// Empty result: SQL returns zero rows. The method MUST return a
+// non-nil, zero-length slice so the JSON encoder emits "[]" not
+// "null" — a nil slice would force the handler to special-case the
+// empty state and the donut chart client to handle "null" responses.
+func TestQueryProtocolDistribution_EmptyResultReturnsEmptySlice(t *testing.T) {
+	s, mock, cleanup := newMockStorage(t)
+	defer cleanup()
+
+	rows := sqlmock.NewRows([]string{"protocol", "percent"}) // no AddRow
+
+	mock.ExpectQuery(qProtocolDistribution).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnRows(rows)
+
+	got, err := s.QueryProtocolDistribution(context.Background(), time.Now().Add(-60*time.Second))
+	if err != nil {
+		t.Fatalf("QueryProtocolDistribution on empty result: unexpected error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected non-nil empty slice, got nil")
+	}
+	if len(got) != 0 {
+		t.Errorf("expected len 0, got %d (%+v)", len(got), got)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet sqlmock expectations: %v", err)
+	}
+}
+
+// DB error: a database failure (network, cancelled context, etc.)
+// must surface as a non-nil error so the handler can map it to 503.
+// This is the same mid-run error contract as QueryDashboardSummary
+// and QueryTopTalkers.
+func TestQueryProtocolDistribution_PropagatesDBError(t *testing.T) {
+	s, mock, cleanup := newMockStorage(t)
+	defer cleanup()
+
+	sentinel := errors.New("connection reset by peer")
+	mock.ExpectQuery(qProtocolDistribution).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnError(sentinel)
+
+	_, err := s.QueryProtocolDistribution(context.Background(), time.Now().Add(-60*time.Second))
+	if err == nil {
+		t.Fatal("expected error from QueryProtocolDistribution, got nil")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("expected wrapped sentinel error, got %v", err)
+	}
+}
+
+// Defensive: a *Storage{} literal (zero value, no db) must not panic.
+// The nil-db guard returns the same error as QueryDashboardSummary
+// and QueryTopTalkers so handlers can treat them uniformly.
+func TestQueryProtocolDistribution_NilDBReturnsError(t *testing.T) {
+	s := &Storage{} // pool and db both nil
+	_, err := s.QueryProtocolDistribution(context.Background(), time.Now())
+	if err == nil {
+		t.Fatal("expected error when db is nil, got nil")
+	}
+}
+
+// SQL contract: the SQL must include the WHERE clause that filters
+// by `time >= $1`. As with the other read methods, this pins the
+// partition pruning that TimescaleDB relies on. A refactor that
+// drops the filter would do a full hypertable scan on every poll.
+func TestQueryProtocolDistribution_SQLHasTimeFilter(t *testing.T) {
+	const want = "WHERE time >= $1"
+	if !strings.Contains(qProtocolDistribution, want) {
+		t.Errorf("protocol distribution SQL must contain %q\nGot:\n%s", want, qProtocolDistribution)
+	}
+}
+
+// SQL contract: the SQL must group by protocol. Without the GROUP BY
+// the response would collapse to a single row (the total of all
+// protocols), which is not what the donut chart expects.
+func TestQueryProtocolDistribution_SQLHasGroupByProtocol(t *testing.T) {
+	const want = "GROUP BY protocol"
+	if !strings.Contains(qProtocolDistribution, want) {
+		t.Errorf("protocol distribution SQL must contain %q\nGot:\n%s", want, qProtocolDistribution)
 	}
 }
