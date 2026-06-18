@@ -15,6 +15,7 @@ func TestLoadDefaultsWhenFileMissing(t *testing.T) {
 	assert.Equal(t, 8080, cfg.Server.Port)
 	assert.Equal(t, "http://localhost:11434", cfg.AI.OllamaURL)
 	assert.Equal(t, "qwen2.5:3b", cfg.AI.OllamaModel)
+	assert.Equal(t, "postgres://viewred:viewred_dev_only@localhost:5432/viewred", cfg.Database.URL)
 }
 
 func TestLoadFromYAMLFile(t *testing.T) {

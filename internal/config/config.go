@@ -1,3 +1,4 @@
+// Package config loads ViewRed configuration from a YAML file with safe defaults.
 package config
 
 import (
@@ -7,10 +8,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Config is the top-level configuration.
 type Config struct {
-	Server  ServerConfig  `yaml:"server"`
-	AI      AIConfig      `yaml:"ai"`
-	Scanner ScannerConfig `yaml:"scanner"`
+	Server   ServerConfig   `yaml:"server"`
+	AI       AIConfig       `yaml:"ai"`
+	Scanner  ScannerConfig  `yaml:"scanner"`
+	Database DatabaseConfig `yaml:"database"`
 }
 
 type ServerConfig struct {
@@ -31,6 +34,11 @@ type ScannerConfig struct {
 	ScanTimeoutSeconds int    `yaml:"scan_timeout_seconds"`
 }
 
+// DatabaseConfig holds the PostgreSQL+TimescaleDB connection settings.
+type DatabaseConfig struct {
+	URL string `yaml:"url"`
+}
+
 func defaults() Config {
 	return Config{
 		Server: ServerConfig{
@@ -47,6 +55,9 @@ func defaults() Config {
 			NmapPath:           "",
 			MaxConcurrentScans: 5,
 			ScanTimeoutSeconds: 600,
+		},
+		Database: DatabaseConfig{
+			URL: "postgres://viewred:viewred_dev_only@localhost:5432/viewred",
 		},
 	}
 }
