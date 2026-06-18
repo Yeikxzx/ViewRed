@@ -25,6 +25,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/viewred/viewred/internal/capture"
 )
 
 // errStorageNotInitialized is returned by the read methods when the
@@ -240,4 +242,153 @@ func (s *Storage) QueryProtocolDistribution(ctx context.Context, since time.Time
 		return nil, err
 	}
 	return shares, nil
+}
+
+// QueryPackets — design constraints (see plan §Task 8 and
+// docs/superpowers/specs/2026-06-18-core-api-and-ui-shell.md §2.4):
+//
+//   - Filter by time range [Since, Until], Protocol, SrcIP, DstIP. Empty
+//     filter strings are "match anything"; the ($N = ” OR col = $N)
+//     pattern lets the SQL plan with a single prepared statement
+//     rather than one per filter combination, which is the right
+//     trade-off because pgx caches the plan anyway and the planner
+//     pushes the equality check down to a single chunk scan.
+//   - Filter by `time >= $1 AND time <= $2` so TimescaleDB can prune
+//     chunks. Dropping the bounds would do a full hypertable scan on
+//     every request and is the #1 way to take the dashboard down.
+//   - ORDER BY time DESC so the most recent packets appear first in
+//     the UI list (the spec's "newest first" semantic). Without an
+//     ORDER BY, Postgres is free to return rows in any order and the
+//     UI's stable scrollback is broken.
+//   - LIMIT $N OFFSET $M for pagination. Limit is clamped in code to
+//     [1, 500] before reaching SQL so a buggy handler cannot ask for
+//     an unbounded result set against the packets hypertable.
+//   - totalCount is a separate SELECT COUNT(*) with the same WHERE
+//     clause, NOT a windowed COUNT() OVER (). The windowed form is
+//     tempting but it forces the planner to materialise the whole
+//     filtered set before applying LIMIT — a single COUNT(*) over
+//     the same predicate uses a chunk-pruned index-only scan and
+//     stays sub-millisecond.
+//   - The packets schema does not store MAC addresses, so SrcMAC /
+//     DstMAC are returned as empty strings. The UI must already
+//     tolerate this for tunnel-encapsulated traffic that lacks L2
+//     info; we don't fabricate MACs that the database never had.
+//
+// Defaults: limit <= 0 → 50. This is the spec-mandated default
+// (MUST default to 50 per the spec) and is the same default the
+// handler applies when ?limit= is missing, so the two layers agree.
+const defaultPacketsLimit = 50
+const maxPacketsLimit = 500
+
+// qPackets selects the filtered, paginated packet rows for the UI list.
+// Argument order: $1 since, $2 until, $3 protocol, $4 src_ip, $5 dst_ip,
+// $6 limit, $7 offset. The ($N = ” OR col = $N) guards let an empty
+// filter string act as a wildcard, which is the spec's "any" semantic
+// for an unfiltered column.
+const qPackets = `
+SELECT time, src_ip, dst_ip, src_port, dst_port, protocol, length, payload_preview
+FROM packets
+WHERE time >= $1 AND time <= $2
+  AND ($3 = '' OR protocol = $3)
+  AND ($4 = '' OR src_ip = $4)
+  AND ($5 = '' OR dst_ip = $5)
+ORDER BY time DESC
+LIMIT $6 OFFSET $7
+`
+
+// qPacketsCount mirrors the WHERE clause of qPackets but emits a
+// single integer — the total number of rows that match the filter,
+// ignoring LIMIT/OFFSET. The handler/UI use this to render "page N of
+// M" controls.
+const qPacketsCount = `
+SELECT COUNT(*)
+FROM packets
+WHERE time >= $1 AND time <= $2
+  AND ($3 = '' OR protocol = $3)
+  AND ($4 = '' OR src_ip = $4)
+  AND ($5 = '' OR dst_ip = $5)
+`
+
+// QueryPackets returns a paginated, filtered slice of packet events
+// plus the total count of matching rows. The result is ordered by
+// time DESC (newest first). An empty result produces a non-nil empty
+// slice and totalCount=0, per the spec.
+func (s *Storage) QueryPackets(ctx context.Context, filter PacketFilter) ([]capture.PacketEvent, int, error) {
+	if s.db == nil {
+		return nil, 0, errStorageNotInitialized
+	}
+
+	// Clamp limit in code. The handler also defaults/clips, but doing
+	// it here means a future caller (e.g. a CLI tool, an SSE ticker's
+	// internal sampling) cannot bypass the cap and accidentally ask
+	// the packets hypertable for an unbounded result set.
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = defaultPacketsLimit
+	}
+	if limit > maxPacketsLimit {
+		limit = maxPacketsLimit
+	}
+
+	// data query — the filtered, paginated slice. The protocol/src_ip/
+	// dst_ip filters are passed verbatim; the SQL uses the
+	// ($N = '' OR col = $N) pattern to interpret an empty string as
+	// "no filter" for that column.
+	dataRows, err := s.db.QueryContext(ctx, qPackets,
+		filter.Since,
+		filter.Until,
+		filter.Protocol,
+		filter.SrcIP,
+		filter.DstIP,
+		limit,
+		filter.Offset,
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer dataRows.Close()
+
+	// Pre-allocate a non-nil empty slice so JSON encodes "[]" when no
+	// rows match. The packet list UI renders an empty state without
+	// nil-deref checks.
+	events := make([]capture.PacketEvent, 0)
+	for dataRows.Next() {
+		var ev capture.PacketEvent
+		if err := dataRows.Scan(
+			&ev.Timestamp,
+			&ev.SrcIP,
+			&ev.DstIP,
+			&ev.SrcPort,
+			&ev.DstPort,
+			&ev.Protocol,
+			&ev.Length,
+			&ev.PayloadPreview,
+		); err != nil {
+			return nil, 0, err
+		}
+		// The packets table does not store MAC addresses; leave the
+		// L2 fields empty so the UI can render "<no L2>" consistently.
+		events = append(events, ev)
+	}
+	if err := dataRows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	// count query — the total number of rows that match the same
+	// filter, ignoring LIMIT/OFFSET. Run after the data query so a
+	// mid-run DB error on the count doesn't leave the caller
+	// wondering whether the (possibly empty) data slice is "all
+	// there is" or "truncated by a failure".
+	var total int
+	if err := s.db.QueryRowContext(ctx, qPacketsCount,
+		filter.Since,
+		filter.Until,
+		filter.Protocol,
+		filter.SrcIP,
+		filter.DstIP,
+	).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	return events, total, nil
 }
