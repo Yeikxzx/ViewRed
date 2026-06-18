@@ -3,13 +3,15 @@
 // This file hosts the Server-Sent Events (SSE) handlers that power
 // the React dashboard's live updates. Two handlers live here:
 //
-//   - StreamMetricsHandler: a producer+consumer that ticks once per
-//     second, queries the dashboard summary via the storage layer,
-//     and broadcasts a metrics event on the broker. The handler is
-//     also a consumer of that topic and relays every event onto the
-//     wire. The per-request ticker keeps the test suite fast and
-//     matches the spec in Plan 3 Task 15; main.go later replaces
-//     this with a single shared ticker in Task 17.
+//   - StreamMetricsHandler: a pure relay that subscribes to the
+//     broker's "metrics" topic and writes every event it delivers
+//     onto the wire. The handler does NOT start a ticker or call
+//     the storage Querier; the shared 1 Hz ticker in
+//     cmd/viewred/main_wire.go is the sole producer on the topic.
+//     The per-request ticker that used to live here was removed in
+//     the Plan 3 review follow-up: running two producers (per-request
+//     and shared) on the same topic doubled the event rate and
+//     broke the dashboard.
 //
 //   - StreamStubHandler: a thin consumer for the alerts, topology,
 //     and LLM streams that exist in the UI but do not yet have
@@ -26,66 +28,43 @@
 package handlers
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/viewred/viewred/internal/sse"
-	"github.com/viewred/viewred/internal/storage"
 )
 
-// defaultMetricsStreamInterval is the cadence at which
-// StreamMetricsHandler queries the dashboard and broadcasts a
-// metrics event. 1 Hz matches what the React dashboard renders
-// and keeps the SQL aggregates cheap.
-const defaultMetricsStreamInterval = 1 * time.Second
-
 // metricsStreamTopic is the broker routing key the metrics
-// handler subscribes to and broadcasts on. The frontend
-// EventSource listens on /stream/metrics and reaches the broker
-// through this same topic.
+// handler subscribes to. The frontend EventSource listens on
+// /stream/metrics and reaches the broker through this same topic.
+// The shared ticker in cmd/viewred/main_wire.go broadcasts on the
+// same topic; the handler is a pure relay.
 const metricsStreamTopic = "metrics"
 
-// metricsStreamEventName is the SSE event name the metrics
-// handler emits. Matches the value the React dashboard
-// EventSource filters on.
-const metricsStreamEventName = "metrics"
-
-// metricsStreamLookback is the lookback window used when
-// querying the dashboard. One hour matches the dashboard
-// summary's default and gives the SSE client a meaningful rate
-// even when no recent activity exists.
-const metricsStreamLookback = 1 * time.Hour
-
 // StreamMetricsHandlerDeps groups the dependencies of
-// StreamMetricsHandler. Both fields are required.
+// StreamMetricsHandler. Only the Broker is required — the handler
+// is a pure relay and does not need the storage Querier.
 type StreamMetricsHandlerDeps struct {
-	Broker  *sse.Broker
-	Querier storage.Querier
+	Broker *sse.Broker
 }
 
-// StreamMetricsHandler streams dashboard metrics at 1 Hz.
+// StreamMetricsHandler serves GET /api/v1/stream/metrics. It sets
+// the canonical SSE response headers, subscribes to the broker's
+// "metrics" topic, and writes every event the broker delivers onto
+// the wire as `event: <name>\ndata: <json>\n\n`. The handler does
+// NOT start a ticker and does NOT call any storage layer — the
+// shared 1 Hz ticker in cmd/viewred/main_wire.go is the sole
+// producer on the topic, so all SSE clients see the same metrics
+// stream at the same cadence.
 //
-// On each tick the handler queries the dashboard summary via
-// Querier and broadcasts an Event on the broker's "metrics"
-// topic. The handler is also subscribed to that topic, so it
-// relays every event (including its own broadcasts) onto the
-// wire as `event: metrics\ndata: <json>\n\n`. On client
-// disconnect the handler unsubscribes and stops the ticker so
-// the broker can reclaim the buffer slot.
+// On client disconnect the handler unsubscribes so the broker
+// can reclaim the buffer slot. The broker also auto-unsubscribes
+// when the request context is cancelled, so the explicit
+// unsubscribe is the panic-safety net.
 func StreamMetricsHandler(deps StreamMetricsHandlerDeps) gin.HandlerFunc {
-	return streamMetricsHandlerWithInterval(deps, defaultMetricsStreamInterval)
-}
-
-// streamMetricsHandlerWithInterval is the test-friendly form
-// of StreamMetricsHandler that lets the unit test inject a
-// faster tick. Production callers should use
-// StreamMetricsHandler so the cadence stays at 1 Hz.
-func streamMetricsHandlerWithInterval(deps StreamMetricsHandlerDeps, interval time.Duration) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// SSE headers MUST be set before the first Write. Once
 		// gin's writer flushes the status line, headers are
@@ -97,16 +76,12 @@ func streamMetricsHandlerWithInterval(deps StreamMetricsHandlerDeps, interval ti
 		c.Writer.WriteHeader(http.StatusOK)
 		c.Writer.Flush()
 
-		// Subscribe BEFORE starting the ticker so a tick that
-		// fires immediately is not lost. The broker's
+		// Subscribe to the metrics topic. The broker's
 		// Subscribe is bounded by c.Request.Context(), so a
 		// client that disconnects before the broker accepts
 		// the registration will not deadlock.
 		ch, unsubscribe := deps.Broker.Subscribe(c.Request.Context(), []string{metricsStreamTopic})
 		defer unsubscribe()
-
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
 
 		c.Stream(func(w io.Writer) bool {
 			select {
@@ -119,9 +94,6 @@ func streamMetricsHandlerWithInterval(deps StreamMetricsHandlerDeps, interval ti
 				}
 				writeSSEFrame(w, ev.Name, ev.Data)
 				return true
-			case <-ticker.C:
-				broadcastMetricsTick(c, deps)
-				return true
 			case <-c.Request.Context().Done():
 				// Client disconnected. Returning false
 				// makes gin's Stream exit cleanly.
@@ -129,30 +101,6 @@ func streamMetricsHandlerWithInterval(deps StreamMetricsHandlerDeps, interval ti
 			}
 		})
 	}
-}
-
-// broadcastMetricsTick runs one cycle of the metrics loop:
-// query the dashboard, marshal the result, and broadcast an
-// Event on the broker. On any error (storage down, marshal
-// failure) the tick is silently dropped — the next tick will
-// try again, and a successful query will heal the stream.
-//
-// ctx is the request context, so when the client disconnects
-// the underlying query aborts promptly.
-func broadcastMetricsTick(c *gin.Context, deps StreamMetricsHandlerDeps) {
-	summary, err := deps.Querier.QueryDashboardSummary(c.Request.Context(), time.Now().Add(-metricsStreamLookback))
-	if err != nil {
-		return
-	}
-	data, err := json.Marshal(summary)
-	if err != nil {
-		return
-	}
-	deps.Broker.Broadcast(sse.Event{
-		Name:  metricsStreamEventName,
-		Data:  data,
-		Topic: metricsStreamTopic,
-	})
 }
 
 // StreamStubHandlerDeps groups the dependencies of

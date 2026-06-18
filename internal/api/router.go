@@ -98,8 +98,7 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 		v1.GET("/vulnerabilities", handlers.VulnerabilitiesList)
 		v1.GET("/config", handlers.ConfigGet)
 		v1.GET("/stream/metrics", handlers.StreamMetricsHandler(handlers.StreamMetricsHandlerDeps{
-			Broker:  deps.Broker,
-			Querier: deps.Querier,
+			Broker: deps.Broker,
 		}))
 		v1.GET("/stream/alerts", handlers.StreamStubHandler(handlers.StreamStubHandlerDeps{
 			Broker: deps.Broker,
