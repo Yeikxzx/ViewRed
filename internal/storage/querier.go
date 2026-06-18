@@ -22,26 +22,37 @@ import (
 // computes each second; ActiveConnections is the count of distinct
 // (src_ip, dst_ip, src_port, dst_port) tuples seen in the window;
 // DeviceCount is the count of distinct IPs.
+//
+// JSON tags use snake_case so the SSE ticker can json.Marshal this
+// type directly and produce the wire shape the React dashboard
+// expects (metrics.packets_per_sec, metrics.bytes_per_sec, ...). The
+// HTTP handler at /api/v1/dashboard/summary also maps to the same
+// shape via gin.H, so the two paths agree.
 type DashboardSummary struct {
-	PacketsPerSec     float64
-	BytesPerSec       float64
-	ActiveConnections int64
-	DeviceCount       int64
+	PacketsPerSec     float64 `json:"packets_per_sec"`
+	BytesPerSec       float64 `json:"bytes_per_sec"`
+	ActiveConnections int64   `json:"active_connections"`
+	DeviceCount       int64   `json:"device_count"`
 }
 
 // TopTalker represents a single IP's traffic volume. The HTTP layer maps
 // this directly to the top-talkers bar chart.
+//
+// JSON tags use snake_case to keep the wire format consistent with
+// the rest of the dashboard shape.
 type TopTalker struct {
-	IP    string
-	Bytes int64
+	IP    string `json:"ip"`
+	Bytes int64  `json:"bytes"`
 }
 
 // ProtocolShare represents one protocol's percentage of the total
 // traffic in the window. The sum across all shares in a single response
 // is approximately 100 (rounding may yield 99.99 or 100.01).
+//
+// JSON tags use snake_case to keep the wire format consistent.
 type ProtocolShare struct {
-	Protocol string
-	Percent  float64
+	Protocol string  `json:"protocol"`
+	Percent  float64 `json:"percent"`
 }
 
 // PacketFilter contains the parameters for the packet list endpoint.
@@ -66,15 +77,20 @@ type DeviceFilter struct {
 
 // Device is a discovered host. RiskScore is nullable because not every
 // device has been scored yet (scoring lands in a later plan).
+//
+// JSON tags use snake_case to match the device-table wire format.
+// Note: a nil RiskScore must serialise as JSON `null` (NOT be elided
+// with `omitempty`); the React device table renders "—" for null
+// and "0.0" for 0.0, so the distinction is part of the contract.
 type Device struct {
-	ID        int64
-	IP        string
-	MAC       string
-	Vendor    string
-	Hostname  string
-	FirstSeen time.Time
-	LastSeen  time.Time
-	RiskScore *float64
+	ID        int64     `json:"id"`
+	IP        string    `json:"ip"`
+	MAC       string    `json:"mac"`
+	Vendor    string    `json:"vendor"`
+	Hostname  string    `json:"hostname"`
+	FirstSeen time.Time `json:"first_seen"`
+	LastSeen  time.Time `json:"last_seen"`
+	RiskScore *float64  `json:"risk_score"`
 }
 
 // Querier is the read interface for storage. Implementations must be
