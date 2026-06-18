@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import DashboardView from './components/DashboardView';
@@ -9,6 +10,7 @@ import TopologiaView from './components/TopologiaView';
 import VulnerabilidadesView from './components/VulnerabilidadesView';
 import AsistenteView from './components/AsistenteView';
 import ConfiguracionView from './components/ConfiguracionView';
+import NotFoundView from './components/NotFoundView';
 
 import { ViewType, NetworkAlert, Vulnerability, ChatMessage } from './types';
 import { llm, type Message } from './lib/llm';
@@ -19,6 +21,10 @@ import {
 } from './data/mockData';
 
 export default function App() {
+  // currentView is kept only for Sidebar/Header active-state styling during
+  // the 6-step migration; the URL (via <Routes>) is now the source of truth
+  // for which view is rendered. Task 22 removes this state and switches the
+  // Sidebar to React Router <Link> components.
   const [currentView, setView] = useState<ViewType>('dashboard');
   const [collapsed, setCollapsed] = useState(false);
   const [isCapturing, setIsCapturing] = useState(true);
@@ -103,81 +109,94 @@ export default function App() {
 
   return (
     <div id="viewred-app-root" className="flex h-screen bg-[#0a0e14] overflow-hidden select-none">
-      {/* Sidebar Control left */}
-      <Sidebar
-        currentView={currentView}
-        setView={setView}
-        collapsed={collapsed}
-        setCollapsed={setCollapsed}
-        activeAlertCount={activeAlertCount}
-      />
-
-      {/* Main Container body right */}
-      <div id="main-content-wrapper" className="flex-1 flex flex-col overflow-hidden">
-        {/* Header telemetry top */}
-        <Header
+        {/* Sidebar Control left */}
+        <Sidebar
           currentView={currentView}
           setView={setView}
-          isCapturing={isCapturing}
-          toggleCapture={toggleCapture}
-          openAIAssistant={() => setView('asistente')}
+          collapsed={collapsed}
+          setCollapsed={setCollapsed}
+          activeAlertCount={activeAlertCount}
         />
 
-        {/* Dynamic view routes body content */}
-        <main id="app-viewport" className="flex-1 overflow-y-auto p-6 scroll-smooth">
-          {currentView === 'dashboard' && (
-            <DashboardView
-              setView={setView}
-              alerts={alerts}
-              setSelectedAlert={setSelectedAlertToExplain}
-            />
-          )}
+        {/* Main Container body right */}
+        <div id="main-content-wrapper" className="flex-1 flex flex-col overflow-hidden">
+          {/* Header telemetry top */}
+          <Header
+            currentView={currentView}
+            setView={setView}
+            isCapturing={isCapturing}
+            toggleCapture={toggleCapture}
+            openAIAssistant={() => setView('asistente')}
+          />
 
-          {currentView === 'captura' && (
-            <CapturaView isCapturing={isCapturing} toggleCapture={toggleCapture} />
-          )}
-
-          {currentView === 'filtros' && <FiltrosView />}
-
-          {currentView === 'alertas' && (
-            <AlertasView
-              alerts={alerts}
-              onAcknowledgeAlert={handleAcknowledgeAlert}
-              setSelectedAlertToExplain={setSelectedAlertToExplain}
-              setView={setView}
-            />
-          )}
-
-          {currentView === 'topologia' && (
-            <TopologiaView
-              devices={devices}
-              setView={setView}
-              setSelectedDeviceIP={setSelectedDeviceIP}
-            />
-          )}
-
-          {currentView === 'vulnerabilidades' && (
-            <VulnerabilidadesView
-              vulnerabilities={vulnerabilities}
-              onMitigateVuln={handleMitigateVuln}
-              selectedDeviceIP={selectedDeviceIP}
-              setSelectedDeviceIP={setSelectedDeviceIP}
-            />
-          )}
-
-          {currentView === 'asistente' && (
-            <AsistenteView
-              chatHistory={chatHistory}
-              onSubmitMessage={handleSendMessage}
-              onClearHistory={handleClearChatHistory}
-              selectedAlertToExplain={selectedAlertToExplain}
-              onClearExplainedAlert={() => setSelectedAlertToExplain(null)}
-            />
-          )}
-
-          {currentView === 'configuracion' && <ConfiguracionView />}
-        </main>
+          {/* Dynamic view routes body content */}
+          <main id="app-viewport" className="flex-1 overflow-y-auto p-6 scroll-smooth">
+            <Routes>
+              <Route path="/" element={<Navigate to="/dashboard" replace />} />
+              <Route
+                path="/dashboard"
+                element={
+                  <DashboardView
+                    setView={setView}
+                    alerts={alerts}
+                    setSelectedAlert={setSelectedAlertToExplain}
+                  />
+                }
+              />
+              <Route
+                path="/captura"
+                element={<CapturaView isCapturing={isCapturing} toggleCapture={toggleCapture} />}
+              />
+              <Route path="/filtros" element={<FiltrosView />} />
+              <Route
+                path="/alertas"
+                element={
+                  <AlertasView
+                    alerts={alerts}
+                    onAcknowledgeAlert={handleAcknowledgeAlert}
+                    setSelectedAlertToExplain={setSelectedAlertToExplain}
+                    setView={setView}
+                  />
+                }
+              />
+              <Route
+                path="/topologia"
+                element={
+                  <TopologiaView
+                    devices={devices}
+                    setView={setView}
+                    setSelectedDeviceIP={setSelectedDeviceIP}
+                  />
+                }
+              />
+              <Route
+                path="/vulnerabilidades"
+                element={
+                  <VulnerabilidadesView
+                    vulnerabilities={vulnerabilities}
+                    onMitigateVuln={handleMitigateVuln}
+                    selectedDeviceIP={selectedDeviceIP}
+                    setSelectedDeviceIP={setSelectedDeviceIP}
+                  />
+                }
+              />
+              <Route
+                path="/asistente"
+                element={
+                  <AsistenteView
+                    chatHistory={chatHistory}
+                    onSubmitMessage={handleSendMessage}
+                    onClearHistory={handleClearChatHistory}
+                    selectedAlertToExplain={selectedAlertToExplain}
+                    onClearExplainedAlert={() => setSelectedAlertToExplain(null)}
+                  />
+                }
+              />
+              <Route path="/configuracion" element={<ConfiguracionView />} />
+              <Route path="*" element={<NotFoundView />} />
+            </Routes>
+          </main>
+        </div>
       </div>
-    </div>
   );
 }
