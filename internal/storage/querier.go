@@ -1,0 +1,194 @@
+// Package storage provides read access to the captured packet store.
+//
+// The Querier interface is the read-only surface that HTTP handlers and
+// the SSE ticker depend on. Production code uses *Storage (which will
+// implement Querier once Task 5+ lands); tests and degraded-DB paths
+// use MockQuerier and ErrorQuerier respectively. The split keeps
+// handlers free of nil checks: when the database is unavailable, main.go
+// injects an ErrorQuerier so every method returns a 503-mappable error
+// uniformly.
+package storage
+
+import (
+	"context"
+	"time"
+
+	"github.com/viewred/viewred/internal/capture"
+)
+
+// DashboardSummary contains the KPI metrics rendered on the dashboard.
+//
+// PacketsPerSec and BytesPerSec are windowed rates the SSE ticker
+// computes each second; ActiveConnections is the count of distinct
+// (src_ip, dst_ip, src_port, dst_port) tuples seen in the window;
+// DeviceCount is the count of distinct IPs.
+type DashboardSummary struct {
+	PacketsPerSec     float64
+	BytesPerSec       float64
+	ActiveConnections int64
+	DeviceCount       int64
+}
+
+// TopTalker represents a single IP's traffic volume. The HTTP layer maps
+// this directly to the top-talkers bar chart.
+type TopTalker struct {
+	IP    string
+	Bytes int64
+}
+
+// ProtocolShare represents one protocol's percentage of the total
+// traffic in the window. The sum across all shares in a single response
+// is approximately 100 (rounding may yield 99.99 or 100.01).
+type ProtocolShare struct {
+	Protocol string
+	Percent  float64
+}
+
+// PacketFilter contains the parameters for the packet list endpoint.
+// Zero values are valid defaults: empty Since/Until mean "no bound",
+// empty Protocol/SrcIP/DstIP mean "any", and Limit/Offset of 0 mean
+// "use server default" (handler enforces a sane cap).
+type PacketFilter struct {
+	Since    time.Time
+	Until    time.Time
+	Protocol string
+	SrcIP    string
+	DstIP    string
+	Limit    int
+	Offset   int
+}
+
+// DeviceFilter contains the parameters for the device list endpoint.
+type DeviceFilter struct {
+	Limit  int
+	Offset int
+}
+
+// Device is a discovered host. RiskScore is nullable because not every
+// device has been scored yet (scoring lands in a later plan).
+type Device struct {
+	ID        int64
+	IP        string
+	MAC       string
+	Vendor    string
+	Hostname  string
+	FirstSeen time.Time
+	LastSeen  time.Time
+	RiskScore *float64
+}
+
+// Querier is the read interface for storage. Implementations must be
+// safe for concurrent use by multiple HTTP handlers.
+type Querier interface {
+	QueryDashboardSummary(ctx context.Context, since time.Time) (DashboardSummary, error)
+	QueryTopTalkers(ctx context.Context, since time.Time, limit int) ([]TopTalker, error)
+	QueryProtocolDistribution(ctx context.Context, since time.Time) ([]ProtocolShare, error)
+	QueryPackets(ctx context.Context, filter PacketFilter) ([]capture.PacketEvent, int, error)
+	QueryDevices(ctx context.Context, filter DeviceFilter) ([]Device, int, error)
+}
+
+// MockQuerier is a hand-rolled test double. Each method delegates to a
+// function field when set, otherwise returns the zero value with no
+// error. This is the same pattern Plan 2 used for MockCapture.
+//
+// The function-field approach beats generating a mock per-method
+// because it keeps the test code declarative and makes "do nothing"
+// trivial — just construct an empty MockQuerier.
+type MockQuerier struct {
+	DashboardSummaryFn func(ctx context.Context, since time.Time) (DashboardSummary, error)
+	TopTalkersFn       func(ctx context.Context, since time.Time, limit int) ([]TopTalker, error)
+	ProtocolDistFn     func(ctx context.Context, since time.Time) ([]ProtocolShare, error)
+	PacketsFn          func(ctx context.Context, filter PacketFilter) ([]capture.PacketEvent, int, error)
+	DevicesFn          func(ctx context.Context, filter DeviceFilter) ([]Device, int, error)
+}
+
+// Compile-time check that MockQuerier implements Querier. If the
+// interface gains a method, the build fails here, not in a downstream
+// handler test.
+var _ Querier = (*MockQuerier)(nil)
+
+func (m *MockQuerier) QueryDashboardSummary(ctx context.Context, since time.Time) (DashboardSummary, error) {
+	if m.DashboardSummaryFn != nil {
+		return m.DashboardSummaryFn(ctx, since)
+	}
+	return DashboardSummary{}, nil
+}
+
+func (m *MockQuerier) QueryTopTalkers(ctx context.Context, since time.Time, limit int) ([]TopTalker, error) {
+	if m.TopTalkersFn != nil {
+		return m.TopTalkersFn(ctx, since, limit)
+	}
+	return nil, nil
+}
+
+func (m *MockQuerier) QueryProtocolDistribution(ctx context.Context, since time.Time) ([]ProtocolShare, error) {
+	if m.ProtocolDistFn != nil {
+		return m.ProtocolDistFn(ctx, since)
+	}
+	return nil, nil
+}
+
+func (m *MockQuerier) QueryPackets(ctx context.Context, filter PacketFilter) ([]capture.PacketEvent, int, error) {
+	if m.PacketsFn != nil {
+		return m.PacketsFn(ctx, filter)
+	}
+	return nil, 0, nil
+}
+
+func (m *MockQuerier) QueryDevices(ctx context.Context, filter DeviceFilter) ([]Device, int, error) {
+	if m.DevicesFn != nil {
+		return m.DevicesFn(ctx, filter)
+	}
+	return nil, 0, nil
+}
+
+// ErrorQuerier returns its Err from every method. main.go injects this
+// when storage initialization fails, so HTTP handlers never need a nil
+// check on the querier — every error maps cleanly to a 503.
+//
+// A nil Err is treated as a generic "storage unavailable" error so
+// handlers never accidentally serve an empty success response when the
+// dependency is missing.
+type ErrorQuerier struct{ Err error }
+
+// Compile-time check that ErrorQuerier implements Querier.
+var _ Querier = (*ErrorQuerier)(nil)
+
+func (e *ErrorQuerier) err() error {
+	if e.Err != nil {
+		return e.Err
+	}
+	return errStorageUnavailable
+}
+
+// errStorageUnavailable is the fallback returned by ErrorQuerier when
+// Err is nil. It is package-private because no caller should ever need
+// to match on it — handlers only need a non-nil error to map to 503.
+var errStorageUnavailable = &storageError{message: "storage: unavailable"}
+
+// storageError is the concrete type behind errStorageUnavailable. It
+// carries no fields beyond a message because the only thing handlers
+// need is a string for the JSON error body.
+type storageError struct{ message string }
+
+func (s *storageError) Error() string { return s.message }
+
+func (e *ErrorQuerier) QueryDashboardSummary(ctx context.Context, since time.Time) (DashboardSummary, error) {
+	return DashboardSummary{}, e.err()
+}
+
+func (e *ErrorQuerier) QueryTopTalkers(ctx context.Context, since time.Time, limit int) ([]TopTalker, error) {
+	return nil, e.err()
+}
+
+func (e *ErrorQuerier) QueryProtocolDistribution(ctx context.Context, since time.Time) ([]ProtocolShare, error) {
+	return nil, e.err()
+}
+
+func (e *ErrorQuerier) QueryPackets(ctx context.Context, filter PacketFilter) ([]capture.PacketEvent, int, error) {
+	return nil, 0, e.err()
+}
+
+func (e *ErrorQuerier) QueryDevices(ctx context.Context, filter DeviceFilter) ([]Device, int, error) {
+	return nil, 0, e.err()
+}
