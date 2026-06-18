@@ -1,7 +1,20 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import App from './App';
+
+// App.test.tsx is a routing test: it only asserts which view wrapper
+// renders for a given path. It must not depend on the SSE stack, so
+// mock the useSSE hook to a no-op. Behavior of useSSE is covered in
+// src/lib/sse.test.ts and the per-view suites (e.g. DashboardView).
+vi.mock('./lib/sse', () => ({
+  useSSE: () => ({
+    lastEvent: null,
+    connectionStatus: 'disconnected',
+    error: null,
+    reconnect: () => {},
+  }),
+}));
 
 afterEach(() => cleanup());
 

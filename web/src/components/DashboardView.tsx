@@ -1,9 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Activity,
   Database,
   Radio,
   ExternalLink,
+  WifiOff,
+  RefreshCw,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -20,6 +22,49 @@ import {
   protocolDist,
   initialTrafficHistory,
 } from '../data/mockData';
+import { useSSE } from '../lib/sse';
+import { useSSEStore } from '../store/sse-store';
+
+// SSE stream URL for live dashboard metrics. Matches the route
+// registered in internal/api/router.go (`/api/v1/stream/metrics`).
+// The same string is the key the useSSE hook uses to write payloads
+// into the global Zustand store.
+const METRICS_URL = '/api/v1/stream/metrics';
+
+// Rolling window size for the traffic area chart. Spec §11.1 asks for
+// "the last 60 data points from SSE events" — at the 1 Hz broker tick
+// this is a one-minute history.
+const TRAFFIC_WINDOW = 60;
+
+interface MetricsPayload {
+  packets_per_sec: number;
+  bytes_per_sec: number;
+  active_connections: number;
+  device_count: number;
+}
+
+// ---- number formatters -----------------------------------------------------
+//
+// The backend sends `bytes_per_sec` as raw bytes (float64). Networking
+// conventions are 1000-based: 1 KB = 1000 B, 1 MB = 1000 KB, etc. We
+// always show one decimal for the leading unit so a steady 1.2 MB/s
+// stays readable instead of jumping to "1,234,567 B/s".
+function formatPacketsRate(value: number): string {
+  return value.toLocaleString('en-US', {
+    maximumFractionDigits: 1,
+  });
+}
+
+function formatBytesRate(value: number): string {
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} GB`;
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)} MB`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)} KB`;
+  return `${value.toFixed(0)} B`;
+}
+
+function formatInteger(value: number): string {
+  return value.toLocaleString('en-US');
+}
 
 interface DashboardViewProps {
   setView: (view: ViewType) => void;
@@ -32,71 +77,119 @@ export default function DashboardView({
   alerts,
   setSelectedAlert,
 }: DashboardViewProps) {
+  // Open the SSE stream. The hook handles EventSource lifecycle,
+  // exponential-backoff reconnection, and writes incoming payloads
+  // to the global Zustand store under METRICS_URL.
+  useSSE(METRICS_URL);
+
+  // Selectors trigger re-renders when the messages map, connection
+  // status, or last error change. Each selector returns a primitive
+  // (or `undefined` for a missing key) so Zustand's default reference
+  // equality is enough — no shallow comparator needed.
+  const metrics = useSSEStore((s) =>
+    s.messages.get(METRICS_URL),
+  ) as MetricsPayload | undefined;
+
+  const connectionStatus = useSSEStore((s) => s.connectionStatus);
+  const lastError = useSSEStore((s) => s.lastError);
+
+  // True while no payload has arrived yet. This is true on the very
+  // first render (before `open` fires) and during reconnects. Both
+  // cases benefit from the same skeleton placeholder.
+  const isLoading = metrics === undefined;
+  const isError = connectionStatus === 'disconnected' && lastError !== null;
+
+  // ---- traffic chart accumulator -----------------------------------------
+  //
+  // Spec §11.1: "Keep the traffic chart using local state that
+  // accumulates the last 60 data points from SSE events." We append
+  // one point per metrics event and drop the oldest when the window
+  // fills up. The first event also seeds the chart with one row so the
+  // area doesn't render an empty series.
+  //
+  // The accumulator lives in a `useEffect` keyed on the metrics object
+  // (a new reference per broker tick) so we never call setState during
+  // render. The functional `setTrafficData` form makes the dedup check
+  // race-free without needing a ref to the previous state.
   const [trafficData, setTrafficData] = useState(initialTrafficHistory);
-  const [throughput, setThroughput] = useState({ rx: '45.2 GB', tx: '5.4%' });
-
-  // Dynamically update traffic chart lines to give it a stunning live feeling
   useEffect(() => {
-    const interval = setInterval(() => {
-      setTrafficData((prev) => {
-        const nextTime = new Date().toLocaleTimeString('es-ES', {
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-        });
-        const tcpNoise = Math.floor((Math.random() - 0.4) * 80);
-        const udpNoise = Math.floor((Math.random() - 0.4) * 50);
-        const otherNoise = Math.floor((Math.random() - 0.5) * 20);
-
-        const lastItem = prev[prev.length - 1];
-        const nextItem = {
-          time: nextTime,
-          tcp: Math.max(150, Math.min(800, lastItem.tcp + tcpNoise)),
-          udp: Math.max(60, Math.min(350, lastItem.udp + udpNoise)),
-          other: Math.max(20, Math.min(100, lastItem.other + otherNoise)),
-        };
-
-        return [...prev.slice(1), nextItem];
+    if (metrics === undefined) return;
+    setTrafficData((prev) => {
+      const last = prev[prev.length - 1];
+      // Only append when the value actually changed — the broker
+      // ticks at 1 Hz, so a steady stream of identical values would
+      // otherwise grow the history without adding information.
+      if (
+        last &&
+        last.tcp === metrics.bytes_per_sec &&
+        last.udp === metrics.packets_per_sec
+      ) {
+        return prev;
+      }
+      const nextTime = new Date().toLocaleTimeString('es-ES', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
       });
-    }, 3000);
+      const nextItem = {
+        time: nextTime,
+        // The legacy mock chart used two arbitrary "tcp"/"udp"
+        // series; we re-use those keys so the AreaChart keeps
+        // rendering without any prop changes. `tcp` carries bytes/s,
+        // `udp` carries packets/s. Future plans (Plan 4 / 5) will
+        // replace these series with per-protocol breakdowns.
+        tcp: Math.max(0, metrics.bytes_per_sec),
+        udp: Math.max(0, metrics.packets_per_sec),
+        other: last?.other ?? 0,
+      };
+      return prev.length >= TRAFFIC_WINDOW
+        ? [...prev.slice(1), nextItem]
+        : [...prev, nextItem];
+    });
+  }, [metrics]);
 
-    return () => clearInterval(interval);
-  }, []);
-
-  const kpiData: KPI[] = [
-    {
-      title: 'Paquetes Totales',
-      value: '1.45M',
-      change: '▲ 12%',
-      trend: 'up',
-      color: 'text-[#3b82f6]',
-      icon: 'Activity',
-    },
-    {
-      title: 'Volumen (Bytes)',
-      value: '45.2 GB',
-      change: '▲ 5.4%',
-      trend: 'up',
-      color: 'text-[#10b981]',
-      icon: 'Database',
-    },
-    {
-      title: 'Conexiones Activas',
-      value: '12,450',
-      change: '▼ 2.1%',
-      trend: 'down',
-      color: 'text-[#f59e0b]',
-      icon: 'Zap',
-    },
-    {
-      title: 'Dispositivos Únicos',
-      value: '342',
-      change: '- 0%',
-      trend: 'neutral',
-      color: 'text-[#06b6d4]',
-      icon: 'Shield',
-    },
-  ];
+  // ---- KPI cards -----------------------------------------------------------
+  //
+  // The cards are derived from the live payload. While loading we
+  // render four skeleton placeholders that match the real cards'
+  // dimensions. Skeletons live behind `kpi-card-N-skeleton` ids so
+  // tests (and future state toggles) can target them precisely.
+  const kpiData: KPI[] | null = isLoading
+    ? null
+    : [
+        {
+          title: 'Paquetes Totales',
+          value: formatPacketsRate(metrics!.packets_per_sec),
+          change: '▲ en vivo',
+          trend: 'up',
+          color: 'text-[#3b82f6]',
+          icon: 'Activity',
+        },
+        {
+          title: 'Volumen (Bytes)',
+          value: formatBytesRate(metrics!.bytes_per_sec),
+          change: '▲ en vivo',
+          trend: 'up',
+          color: 'text-[#10b981]',
+          icon: 'Database',
+        },
+        {
+          title: 'Conexiones Activas',
+          value: formatInteger(metrics!.active_connections),
+          change: '▲ en vivo',
+          trend: 'up',
+          color: 'text-[#f59e0b]',
+          icon: 'Activity',
+        },
+        {
+          title: 'Dispositivos Únicos',
+          value: formatInteger(metrics!.device_count),
+          change: '▲ en vivo',
+          trend: 'up',
+          color: 'text-[#06b6d4]',
+          icon: 'Database',
+        },
+      ];
 
   const handleAlertInteraction = (alert: NetworkAlert) => {
     setSelectedAlert(alert);
@@ -105,45 +198,88 @@ export default function DashboardView({
 
   return (
     <div id="dashboard-view-wrapper" className="space-y-6">
+      {/* SSE error banner — shown when the broker connection is
+          explicitly down and a non-null last error has been recorded.
+          Per spec §11.1 the copy is "Conexión SSE perdida.
+          Reintentando...". The banner sits above the KPI grid so it
+          is the first thing the operator sees when the stream goes
+          away. */}
+      {isError && (
+        <div
+          id="sse-error-banner"
+          role="alert"
+          className="flex items-center gap-3 bg-[#3a1d1d] border border-[#ef4444]/40 text-[#fca5a5] px-4 py-2.5 rounded-md text-xs font-mono"
+        >
+          <WifiOff className="h-4 w-4 flex-shrink-0" />
+          <span className="flex-1">
+            Conexión SSE perdida. Reintentando…
+          </span>
+          <RefreshCw className="h-3.5 w-3.5 opacity-60 animate-spin" />
+        </div>
+      )}
+
       {/* 4 KPIs Highlight cards */}
-      <div id="kpi-grid" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {kpiData.map((kpi, idx) => (
-          <div
-            key={idx}
-            id={`kpi-card-${idx}`}
-            className="bg-[#131820] border border-[#2a3242] p-4 rounded-lg flex flex-col justify-between text-left hover:border-[#3b82f6]/40 transition-all select-none"
-          >
-            <div className="flex justify-between items-center">
-              <span className="font-sans text-xs text-[#9ba3b4] font-medium tracking-wide uppercase">
-                {kpi.title}
-              </span>
-              <span className="text-[#5c6473] font-mono text-sm">[]</span>
-            </div>
-            <div className="mt-2.5 flex items-baseline gap-2.5">
-              <span className="font-sans font-bold text-[#e4e7eb] text-2xl tracking-tight">
-                {kpi.value}
-              </span>
-              <span
-                className={`font-mono text-xs font-semibold px-1.5 py-0.5 rounded ${
-                  kpi.trend === 'up'
-                    ? 'text-[#10b981]'
-                    : kpi.trend === 'down'
-                    ? 'text-[#ef4444]'
-                    : 'text-[#9ba3b4]'
-                }`}
+      <div
+        id="kpi-grid"
+        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
+      >
+        {kpiData === null
+          ? // Loading state: 4 skeleton placeholders, each with a
+            // stable `kpi-card-N-skeleton` id and the same dimensions
+            // as the real card so the layout doesn't shift when data
+            // arrives.
+            [0, 1, 2, 3].map((idx) => (
+              <div
+                key={idx}
+                id={`kpi-card-${idx}-skeleton`}
+                aria-busy="true"
+                className="bg-[#131820] border border-[#2a3242] p-4 rounded-lg flex flex-col justify-between text-left select-none"
               >
-                {kpi.change}
-              </span>
-            </div>
-            <div className="mt-1 text-[10px] font-mono text-[#5c6473]">
-              <span>Últimos 60s acumulados</span>
-            </div>
-          </div>
-        ))}
+                <div className="h-3 w-24 rounded bg-[#1c2230] animate-pulse" />
+                <div className="mt-3 h-7 w-20 rounded bg-[#1c2230] animate-pulse" />
+                <div className="mt-2 h-2.5 w-32 rounded bg-[#1c2230] animate-pulse" />
+              </div>
+            ))
+          : kpiData.map((kpi, idx) => (
+              <div
+                key={idx}
+                id={`kpi-card-${idx}`}
+                className="bg-[#131820] border border-[#2a3242] p-4 rounded-lg flex flex-col justify-between text-left hover:border-[#3b82f6]/40 transition-all select-none"
+              >
+                <div className="flex justify-between items-center">
+                  <span className="font-sans text-xs text-[#9ba3b4] font-medium tracking-wide uppercase">
+                    {kpi.title}
+                  </span>
+                  <span className="text-[#5c6473] font-mono text-sm">[]</span>
+                </div>
+                <div className="mt-2.5 flex items-baseline gap-2.5">
+                  <span className="font-sans font-bold text-[#e4e7eb] text-2xl tracking-tight">
+                    {kpi.value}
+                  </span>
+                  <span
+                    className={`font-mono text-xs font-semibold px-1.5 py-0.5 rounded ${
+                      kpi.trend === 'up'
+                        ? 'text-[#10b981]'
+                        : kpi.trend === 'down'
+                        ? 'text-[#ef4444]'
+                        : 'text-[#9ba3b4]'
+                    }`}
+                  >
+                    {kpi.change}
+                  </span>
+                </div>
+                <div className="mt-1 text-[10px] font-mono text-[#5c6473]">
+                  <span>Últimos 60s acumulados</span>
+                </div>
+              </div>
+            ))}
       </div>
 
       {/* Main Charts area */}
-      <div id="dashboard-charts-row" className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div
+        id="dashboard-charts-row"
+        className="grid grid-cols-1 lg:grid-cols-3 gap-6"
+      >
         {/* Line wave/area Chart */}
         <div className="bg-[#131820] border border-[#2a3242] p-4 rounded-lg flex flex-col justify-between lg:col-span-2 text-left">
           <div className="flex justify-between items-center border-b border-[#2a3242] pb-3 mb-4">
@@ -176,9 +312,22 @@ export default function DashboardView({
                     <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1c2230" vertical={false} />
-                <XAxis dataKey="time" stroke="#5c6473" tickLine={false} style={{ fontSize: 9 }} />
-                <YAxis stroke="#5c6473" tickLine={false} style={{ fontSize: 9 }} />
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  stroke="#1c2230"
+                  vertical={false}
+                />
+                <XAxis
+                  dataKey="time"
+                  stroke="#5c6473"
+                  tickLine={false}
+                  style={{ fontSize: 9 }}
+                />
+                <YAxis
+                  stroke="#5c6473"
+                  tickLine={false}
+                  style={{ fontSize: 9 }}
+                />
                 <Tooltip
                   contentStyle={{
                     backgroundColor: '#131820',
@@ -222,7 +371,10 @@ export default function DashboardView({
           <div className="flex flex-col items-center justify-center flex-1 my-3 select-none">
             <div className="relative w-36 h-36 flex items-center justify-center">
               {/* Radial Progress Layers representing L4 stats */}
-              <svg className="absolute w-full h-full transform -rotate-90" viewBox="0 0 100 100">
+              <svg
+                className="absolute w-full h-full transform -rotate-90"
+                viewBox="0 0 100 100"
+              >
                 {/* Background base Ring */}
                 <circle
                   cx="50"
@@ -275,7 +427,9 @@ export default function DashboardView({
                     className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
                     style={{ backgroundColor: proto.color }}
                   />
-                  <span className="font-sans text-[#9ba3b4]">{proto.name}</span>
+                  <span className="font-sans text-[#9ba3b4]">
+                    {proto.name}
+                  </span>
                   <span className="font-mono font-bold text-[#e4e7eb] ml-auto">
                     {proto.value}%
                   </span>
@@ -287,7 +441,10 @@ export default function DashboardView({
       </div>
 
       {/* Top Talkers & Recent Alerts */}
-      <div id="lower-dashboard-row" className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div
+        id="lower-dashboard-row"
+        className="grid grid-cols-1 lg:grid-cols-2 gap-6"
+      >
         {/* Top talkers IPs */}
         <div className="bg-[#131820] border border-[#2a3242] p-4 rounded-lg flex flex-col justify-between text-left">
           <div className="flex justify-between items-center border-b border-[#2a3242] pb-3 mb-4">
@@ -311,7 +468,10 @@ export default function DashboardView({
             </div>
 
             {topTalkersData.map((talker, idx) => (
-              <div key={idx} className="grid grid-cols-12 items-center text-xs">
+              <div
+                key={idx}
+                className="grid grid-cols-12 items-center text-xs"
+              >
                 {/* IP address cell */}
                 <span className="col-span-4 font-mono font-medium text-[#e4e7eb] hover:text-[#3b82f6] cursor-pointer">
                   {talker.ip}
