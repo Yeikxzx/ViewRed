@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/viewred/viewred/internal/api"
+	"github.com/viewred/viewred/internal/api/middleware"
 	"github.com/viewred/viewred/internal/config"
 	"github.com/viewred/viewred/internal/health"
 	"github.com/viewred/viewred/internal/sse"
@@ -106,6 +107,18 @@ func newWireUpWithInterval(cfg *config.Config, rg *health.Registry, querier stor
 		Querier: querier,
 		Broker:  broker,
 		Config:  cfg,
+		// Wire CORS from config so the React UI (running on
+		// Vite at http://localhost:5173 by default) can
+		// reach the API. Without this field the router
+		// would skip the CORS middleware entirely and
+		// every cross-origin request would be rejected by
+		// the browser. Production deployments override
+		// cfg.Server.CORSOrigins via config.yaml.
+		CORSConfig: middleware.CORSConfig{
+			AllowedOrigins: cfg.Server.CORSOrigins,
+			AllowedMethods: []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
+			AllowedHeaders: []string{"Content-Type", "X-Request-Id"},
+		},
 	})
 	return &wireUp{
 		Broker:          broker,

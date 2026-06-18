@@ -17,8 +17,9 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	BindAddress string `yaml:"bind_address"`
-	Port        int    `yaml:"port"`
+	BindAddress string   `yaml:"bind_address"`
+	Port        int      `yaml:"port"`
+	CORSOrigins []string `yaml:"cors_origins"`
 }
 
 type AIConfig struct {
@@ -44,6 +45,15 @@ func defaults() Config {
 		Server: ServerConfig{
 			BindAddress: "127.0.0.1",
 			Port:        8080,
+			// Dev default: permit the Vite dev server so the
+			// React UI can reach the API without a CORS error
+			// in `make web-dev`. Production deployments
+			// override this via server.cors_origins in
+			// config.yaml. Leaving the slice empty would skip
+			// the CORS middleware entirely (see
+			// internal/api/router.go), which is the wrong
+			// default for a dev-friendly binary.
+			CORSOrigins: []string{"http://localhost:5173"},
 		},
 		AI: AIConfig{
 			OllamaURL:          "http://localhost:11434",
