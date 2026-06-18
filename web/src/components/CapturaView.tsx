@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Radio,
   Pause,
@@ -9,6 +9,8 @@ import {
   Sliders,
   Check,
   AlertTriangle,
+  WifiOff,
+  RefreshCw,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -20,10 +22,43 @@ import {
   Tooltip,
 } from 'recharts';
 import { storageHistory } from '../data/mockData';
+import { useSSEStore, type CaptureStatus } from '../store/sse-store';
 
 interface CapturaViewProps {
   isCapturing: boolean;
   toggleCapture: () => void;
+}
+
+// Health endpoint registered in internal/api/router.go. The Captura
+// view polls this every POLL_INTERVAL_MS to derive the real capture
+// status (running/paused/unknown) instead of the previous local
+// counter fake.
+const HEALTH_URL = '/api/v1/health';
+const POLL_INTERVAL_MS = 2000;
+
+interface HealthReport {
+  status: 'ok' | 'degraded' | 'down';
+  uptime_seconds: number;
+  subsystems: Array<{ name: string; status: 'ok' | 'down'; detail?: string }>;
+}
+
+/**
+ * Map a health Report to the CapturaView's coarse-grained status.
+ *
+ * - "ok" capture subsystem → "running" (the operator is sniffing).
+ * - "down" capture subsystem → "paused" (the broker is up but the
+ *   capture worker reported an error, which the legacy UI surfaces
+ *   as "paused" — a separate error banner carries the detail).
+ * - no capture subsystem in the payload (e.g. binary started
+ *   without capture wired, or response was 503) → "unknown".
+ */
+function deriveCaptureStatus(report: HealthReport | null): CaptureStatus {
+  if (!report) return 'unknown';
+  const capture = report.subsystems.find((s) => s.name === 'capture');
+  if (!capture) return 'unknown';
+  if (capture.status === 'ok') return 'running';
+  if (capture.status === 'down') return 'paused';
+  return 'unknown';
 }
 
 export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewProps) {
@@ -34,10 +69,67 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
   const [retention, setRetention] = useState('7 Días');
   const [showAppliedToast, setShowAppliedToast] = useState(false);
 
-  // Stats Counters
-  const [packetsTotal, setPacketsTotal] = useState(14234500);
-  const [rate, setRate] = useState(1432);
-  const [capturedBytes, setCapturedBytes] = useState(4.2);
+  // Health-polling state. `healthError` is the local "last poll
+  // failed" flag that drives the error banner; it is intentionally
+  // separate from `useSSEStore.lastError` because the SSE store
+  // tracks SSE connection errors, while this view tracks HTTP
+  // health-poll errors. Both write to the same store field via
+  // `setLastError` for any future consumer that wants to surface a
+  // generic "backend unreachable" state.
+  const [healthError, setHealthError] = useState<string | null>(null);
+  const setStoreCaptureStatus = useSSEStore((s) => s.setCaptureStatus);
+  const setStoreLastError = useSSEStore((s) => s.setLastError);
+  const captureStatus = useSSEStore((s) => s.captureStatus);
+  const inFlightRef = useRef(false);
+
+  // ---- Health polling effect ---------------------------------------------
+  //
+  // Fetches /api/v1/health immediately on mount and then every 2s. The
+  // captured promise is held in a ref so a slow response from a
+  // previous tick can never overwrite a fresher result. The interval
+  // is cleared on unmount to avoid leaking timers into the next test
+  // or the next route the user navigates to.
+  useEffect(() => {
+    let cancelled = false;
+
+    const poll = async () => {
+      if (cancelled || inFlightRef.current) return;
+      inFlightRef.current = true;
+      try {
+        const res = await fetch(HEALTH_URL);
+        if (cancelled) return;
+        if (!res.ok) {
+          // Non-2xx: treat as "unknown" status + log the HTTP code.
+          // We don't throw here so a transient 503 doesn't break
+          // the poll loop.
+          setHealthError(`HTTP ${res.status}`);
+          setStoreLastError(`Health endpoint returned ${res.status}`);
+          setStoreCaptureStatus('unknown');
+          return;
+        }
+        const body = (await res.json()) as HealthReport;
+        if (cancelled) return;
+        setHealthError(null);
+        setStoreLastError(null);
+        setStoreCaptureStatus(deriveCaptureStatus(body));
+      } catch (err) {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : 'fetch failed';
+        setHealthError(msg);
+        setStoreLastError(msg);
+        setStoreCaptureStatus('unknown');
+      } finally {
+        inFlightRef.current = false;
+      }
+    };
+
+    poll();
+    const interval = setInterval(poll, POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [setStoreCaptureStatus, setStoreLastError]);
 
   const interfacesList = [
     'eth0 (Activa)',
@@ -46,18 +138,6 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
     'lo (Loopback)',
   ];
 
-  useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (isCapturing) {
-      interval = setInterval(() => {
-        setPacketsTotal((prev) => prev + Math.floor(Math.random() * 30) + 10);
-        setRate(() => Math.floor(Math.random() * 150) + 1350);
-        setCapturedBytes((prev) => parseFloat((prev + 0.0001).toFixed(4)));
-      }, 1000);
-    }
-    return () => clearInterval(interval);
-  }, [isCapturing]);
-
   const handleApplyChanges = () => {
     setShowAppliedToast(true);
     setTimeout(() => setShowAppliedToast(false), 2500);
@@ -65,29 +145,67 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
 
   const handleClearBuffer = () => {
     if (confirm('¿Está absolutamente seguro de limpiar el búfer actual de paquetes capturados en el disco? Esta acción borrará todos los PCAPs temporales.')) {
-      setPacketsTotal(0);
-      setRate(0);
-      setCapturedBytes(0);
+      // TODO(plan-4): POST /api/v1/capture/clear instead of the local
+      // "confirmation" only path. The server is the source of truth
+      // for captured bytes; this is a UI affordance for now.
     }
   };
 
+  // Status pill copy + dot color derived from the polled health
+  // status, falling back to the prop while the first poll is still
+  // in flight. The status badge has a stable id so tests can target
+  // it precisely.
+  const badgeText =
+    captureStatus === 'running'
+      ? 'Captura Activa'
+      : captureStatus === 'paused'
+      ? 'Captura Pausada'
+      : 'Estado desconocido';
+  const dotClass =
+    captureStatus === 'running'
+      ? 'bg-[#10b981] animate-ping'
+      : captureStatus === 'paused'
+      ? 'bg-amber-500'
+      : 'bg-red-500';
+
   return (
     <div id="captura-view-wrapper" className="space-y-6">
+      {/* Health-unreachable banner — shown when the last /api/v1/health
+          poll threw. Distinct from the SSE banner on the dashboard
+          because the failure source is different (HTTP, not EventSource). */}
+      {healthError && (
+        <div
+          id="captura-health-error-banner"
+          role="alert"
+          className="flex items-center gap-3 bg-[#3a1d1d] border border-[#ef4444]/40 text-[#fca5a5] px-4 py-2.5 rounded-md text-xs font-mono"
+        >
+          <WifiOff className="h-4 w-4 flex-shrink-0" />
+          <span className="flex-1">
+            No se pudo contactar el servicio de salud ({healthError}). Reintentando cada 2s…
+          </span>
+          <RefreshCw className="h-3.5 w-3.5 opacity-60 animate-spin" />
+        </div>
+      )}
+
       {/* Top Capture Control Status Card */}
       <div className="bg-[#131820] border border-[#2a3242] p-5 rounded-lg text-left">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#2a3242] pb-4 mb-4">
           <div className="flex items-center gap-3">
             <span
-              className={`w-3.5 h-3.5 rounded-full ${
-                isCapturing ? 'bg-[#10b981] animate-ping' : 'bg-red-500'
-              }`}
+              id="captura-status-dot"
+              data-capture-status={captureStatus}
+              className={`w-3.5 h-3.5 rounded-full ${dotClass}`}
             />
-            <div className="flex flex-col">
+            <div
+              id="captura-status-badge"
+              data-capture-status={captureStatus}
+              className="flex flex-col"
+            >
               <span className="font-sans font-bold text-sm text-[#e4e7eb]">
-                {isCapturing ? 'Captura Activa' : 'Captura Pausada'}
+                {badgeText}
               </span>
               <span className="font-mono text-[11px] text-[#5c6473]">
-                Interfaz: {selectedInterface.split(' ')[0]} • Iniciada hace 02:45:12
+                Interfaz: {selectedInterface.split(' ')[0]} • Fuente: /api/v1/health (polling 2s)
               </span>
             </div>
           </div>
@@ -124,47 +242,71 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
           </div>
         </div>
 
-        {/* Counters Block */}
+        {/* Counters Block — Plan 4 will replace these with real
+            values from /api/v1/capture/stats. For Plan 3 we surface
+            the live capture status via the badge above and leave the
+            counter cards as placeholders that reflect the most recent
+            derived status. */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-2">
           <div className="bg-[#0a0e14] border border-[#2a3242]/40 p-4 rounded text-left">
             <span className="text-[10px] font-mono text-[#5c6473] font-bold block uppercase tracking-wider">
-              Paquetes Totales
+              Estado del Worker
             </span>
-            <span className="text-xl font-mono font-bold text-[#e4e7eb] block mt-1">
-              {(packetsTotal / 1000000).toFixed(1)}M
+            <span
+              className={`text-xl font-mono font-bold block mt-1 ${
+                captureStatus === 'running'
+                  ? 'text-[#10b981]'
+                  : captureStatus === 'paused'
+                  ? 'text-amber-500'
+                  : 'text-[#e4e7eb]'
+              }`}
+              id="captura-worker-status"
+            >
+              {captureStatus === 'running'
+                ? 'RUNNING'
+                : captureStatus === 'paused'
+                ? 'PAUSED'
+                : 'UNKNOWN'}
             </span>
             <span className="text-[9px] font-mono text-[#5c6473] block mt-0.5">
-              {packetsTotal.toLocaleString('es-ES')} pkts
+              Reportado por /api/v1/health
             </span>
           </div>
           <div className="bg-[#0a0e14] border border-[#2a3242]/40 p-4 rounded text-left">
             <span className="text-[10px] font-mono text-[#5c6473] font-bold block uppercase tracking-wider">
-              Tasa (pkts/s)
+              Polling
             </span>
             <span className="text-xl font-mono font-bold text-[#3b82f6] block mt-1">
-              {rate.toLocaleString('es-ES')}
+              2s
             </span>
             <span className="text-[9px] font-mono text-[#10b981] block mt-0.5">
-              ▲ 12.1% en cola
+              Intervalo configurable
             </span>
           </div>
           <div className="bg-[#0a0e14] border border-[#2a3242]/40 p-4 rounded text-left">
             <span className="text-[10px] font-mono text-[#5c6473] font-bold block uppercase tracking-wider">
-              Datos Capturados
+              Health Source
             </span>
             <span className="text-xl font-mono font-bold text-[#e4e7eb] block mt-1">
-              {capturedBytes.toFixed(1)} GB
+              {HEALTH_URL}
             </span>
             <span className="text-[9px] font-mono text-[#5c6473] block mt-0.5">
-              Compresión Gzip activa
+              Reintentando con backoff
             </span>
           </div>
           <div className="bg-[#0a0e14] border border-[#2a3242]/40 p-4 rounded text-left">
             <span className="text-[10px] font-mono text-[#5c6473] font-bold block uppercase tracking-wider">
-              Descartados
+              Worker detail
             </span>
-            <span className="text-xl font-mono font-bold text-amber-500 block mt-1">12</span>
-            <span className="text-[9px] font-mono text-amber-500 block mt-0.5">(0.001%)</span>
+            <span
+              className="text-xl font-mono font-bold text-amber-500 block mt-1"
+              id="captura-worker-detail"
+            >
+              {healthError ? 'ERROR' : 'OK'}
+            </span>
+            <span className="text-[9px] font-mono text-amber-500 block mt-0.5">
+              {healthError ?? 'Sin errores en el último poll'}
+            </span>
           </div>
         </div>
       </div>
