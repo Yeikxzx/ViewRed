@@ -7,7 +7,7 @@
 // calls it explicitly on SIGINT/SIGTERM and falls back to the deferred
 // Close() chain only on panic.
 //
-// The required order (spec §9.3) is:
+// The required order (spec §9.3, extended by Plan 3 Task 18) is:
 //
 //  1. Stop the capture driver (no new packets).
 //  2. Close the packets channel (signals downstream consumers to exit).
@@ -16,7 +16,9 @@
 //     RunContext) so the last batch is not dropped.
 //  5. Close the pcap writer (releases the file).
 //  6. Shutdown the HTTP server (drains in-flight requests).
-//  7. Close the storage pool last.
+//  7. Shutdown the SSE broker (sends a "server shutting down" event to
+//     every connected client). NEW in Plan 3.
+//  8. Close the storage pool last.
 package shutdown
 
 import (
@@ -44,6 +46,14 @@ type HTTPServer interface {
 // Storage is the subset of *storage.Storage that Shutdown needs.
 type Storage interface {
 	Close()
+}
+
+// Broker is the subset of *sse.Broker that Shutdown needs. It is
+// declared as a tiny interface in this package (rather than imported
+// from internal/sse) to keep the dependency graph flat and to let
+// tests pass mocks without importing the broker package.
+type Broker interface {
+	Shutdown(ctx context.Context) error
 }
 
 // StorageWriter is the subset of *storage.Writer that Shutdown needs.
@@ -77,6 +87,12 @@ type Params struct {
 	Writer StorageWriter
 	// Server is the HTTP API server. nil is safe.
 	Server HTTPServer
+	// Broker is the SSE broker. It is shut down AFTER the HTTP server
+	// (so no new SSE connections can be accepted) and BEFORE storage
+	// (so the broker can still query the DB if it needs to, and so
+	// connected clients see the graceful shutdown event before the
+	// process tears down). nil is safe (e.g. broker init failed).
+	Broker Broker
 
 	// FlushTimeout is the budget for the final DB flush and for the
 	// HTTP server graceful drain. If zero, defaults to 10 seconds.
@@ -145,7 +161,19 @@ func Shutdown(p Params) error {
 		cancel()
 	}
 
-	// 6. Close the storage pool last so no other subsystem tries to use
+	// 6. Shutdown the SSE broker with the same flush timeout. Runs
+	//    AFTER the HTTP server (step 5) so no new SSE connections can
+	//    be accepted while we drain, and BEFORE the storage pool
+	//    close (step 7) so the broker can still query the DB if it
+	//    needs to. Connected clients see a graceful shutdown event
+	//    before the process exits.
+	if p.Broker != nil {
+		brkCtx, cancel := context.WithTimeout(context.Background(), p.FlushTimeout)
+		record(p.Broker.Shutdown(brkCtx))
+		cancel()
+	}
+
+	// 7. Close the storage pool last so no other subsystem tries to use
 	//    it after shutdown.
 	if p.Storage != nil {
 		p.Storage.Close()

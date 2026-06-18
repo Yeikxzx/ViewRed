@@ -75,6 +75,18 @@ func (m *mockStorage) Close() {
 	m.record.add("store.Close")
 }
 
+// mockBroker records when Shutdown() is called. Implements the shutdown.Broker
+// interface that Params expects.
+type mockBroker struct {
+	shutdownErr error
+	record      *recording
+}
+
+func (m *mockBroker) Shutdown(ctx context.Context) error {
+	m.record.add("broker.Shutdown")
+	return m.shutdownErr
+}
+
 // mockWriter records when Run starts and returns. The Done channel is
 // closed when the for-range on the events channel exits (i.e. when
 // Shutdown closes the channel).
@@ -289,4 +301,108 @@ func indexOf(steps []string, target string) int {
 		}
 	}
 	return -1
+}
+
+// TestShutdown_BrokerOrder is the table-driven regression test for
+// the SSE broker integration in the ordered teardown (Plan 3 Task 18).
+//
+// It asserts that when a Broker is provided via Params, broker.Shutdown
+// is called AFTER server.Shutdown and BEFORE store.Close — matching the
+// spec §6 order:
+//
+//  1. cap.Stop
+//  2. close(packets)  →  writer.Run.done
+//  3. pw.Close
+//  4. server.Shutdown
+//  5. broker.Shutdown   ← NEW (Plan 3)
+//  6. store.Close
+//
+// Cases cover the happy path, nil-broker safety, and broker error
+// propagation.
+func TestShutdown_BrokerOrder(t *testing.T) {
+	tests := []struct {
+		name      string
+		brokerErr error
+		wantErr   bool
+		nilBroker bool
+	}{
+		{
+			name: "broker runs after server before store",
+		},
+		{
+			name:      "nil broker is safe (skips broker step)",
+			nilBroker: true,
+		},
+		{
+			name:      "broker error is returned and steps still run",
+			brokerErr: errors.New("broker boom"),
+			wantErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := &recording{}
+			cap := &mockCapturer{record: rec}
+			pw := &mockCloser{record: rec}
+			store := &mockStorage{record: rec}
+			server := &mockServer{record: rec}
+			writer := newMockWriter(rec)
+
+			params := Params{
+				Capturer:   cap,
+				Packets:    make(chan capture.PacketEvent, 16),
+				PcapWriter: pw,
+				Storage:    store,
+				Writer:     writer,
+				Server:     server,
+			}
+			if !tt.nilBroker {
+				// Assigning to a Broker interface field with a concrete
+				// pointer yields a non-nil interface; that's the normal
+				// production case.
+				params.Broker = &mockBroker{shutdownErr: tt.brokerErr, record: rec}
+			}
+			// When nilBroker is true, params.Broker stays a true nil
+			// interface — matches the production path when main.go
+			// never constructs a broker.
+
+			go writer.Run(context.Background(), params.Packets)
+			select {
+			case <-writer.runStarted:
+			case <-time.After(1 * time.Second):
+				t.Fatal("writer did not start within 1s")
+			}
+
+			err := Shutdown(params)
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.brokerErr != nil {
+					assert.ErrorIs(t, err, tt.brokerErr)
+				}
+			} else {
+				require.NoError(t, err)
+			}
+
+			steps := rec.snapshot()
+			serverIdx := indexOf(steps, "server.Shutdown")
+			storeIdx := indexOf(steps, "store.Close")
+			require.NotEqual(t, -1, serverIdx, "server.Shutdown not recorded: %v", steps)
+			require.NotEqual(t, -1, storeIdx, "store.Close not recorded: %v", steps)
+
+			if tt.nilBroker {
+				// Broker step must be skipped — no "broker.Shutdown" entry.
+				assert.Equal(t, -1, indexOf(steps, "broker.Shutdown"),
+					"nil broker should not record broker.Shutdown, got %v", steps)
+			} else {
+				brokerIdx := indexOf(steps, "broker.Shutdown")
+				require.NotEqual(t, -1, brokerIdx, "broker.Shutdown not recorded: %v", steps)
+				// Spec §6: broker.Shutdown sits between server.Shutdown and store.Close.
+				assert.Greater(t, brokerIdx, serverIdx,
+					"broker.Shutdown must run AFTER server.Shutdown, got %v", steps)
+				assert.Less(t, brokerIdx, storeIdx,
+					"broker.Shutdown must run BEFORE store.Close, got %v", steps)
+			}
+		})
+	}
 }
