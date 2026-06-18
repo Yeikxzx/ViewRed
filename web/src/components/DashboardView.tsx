@@ -6,6 +6,7 @@ import {
   ExternalLink,
   WifiOff,
   RefreshCw,
+  Inbox,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -24,6 +25,10 @@ import {
 } from '../data/mockData';
 import { useSSE } from '../lib/sse';
 import { useSSEStore } from '../store/sse-store';
+import {
+  deriveDashboardViewState,
+  type DashboardMetrics,
+} from '../lib/view-state';
 
 // SSE stream URL for live dashboard metrics. Matches the route
 // registered in internal/api/router.go (`/api/v1/stream/metrics`).
@@ -35,13 +40,6 @@ const METRICS_URL = '/api/v1/stream/metrics';
 // "the last 60 data points from SSE events" — at the 1 Hz broker tick
 // this is a one-minute history.
 const TRAFFIC_WINDOW = 60;
-
-interface MetricsPayload {
-  packets_per_sec: number;
-  bytes_per_sec: number;
-  active_connections: number;
-  device_count: number;
-}
 
 // ---- number formatters -----------------------------------------------------
 //
@@ -79,8 +77,10 @@ export default function DashboardView({
 }: DashboardViewProps) {
   // Open the SSE stream. The hook handles EventSource lifecycle,
   // exponential-backoff reconnection, and writes incoming payloads
-  // to the global Zustand store under METRICS_URL.
-  useSSE(METRICS_URL);
+  // to the global Zustand store under METRICS_URL. We capture the
+  // returned `reconnect` so the error banner can wire it up as the
+  // spec §12 "Reintentar" (retry) callback.
+  const { reconnect } = useSSE(METRICS_URL);
 
   // Selectors trigger re-renders when the messages map, connection
   // status, or last error change. Each selector returns a primitive
@@ -88,16 +88,22 @@ export default function DashboardView({
   // equality is enough — no shallow comparator needed.
   const metrics = useSSEStore((s) =>
     s.messages.get(METRICS_URL),
-  ) as MetricsPayload | undefined;
+  ) as DashboardMetrics | undefined;
 
   const connectionStatus = useSSEStore((s) => s.connectionStatus);
   const lastError = useSSEStore((s) => s.lastError);
 
-  // True while no payload has arrived yet. This is true on the very
-  // first render (before `open` fires) and during reconnects. Both
-  // cases benefit from the same skeleton placeholder.
-  const isLoading = metrics === undefined;
-  const isError = connectionStatus === 'disconnected' && lastError !== null;
+  // Spec §12: derive a single ViewState<DashboardMetrics> from the
+  // SSE inputs. The view branches (loading / error / empty / data)
+  // are mutually exclusive at the type level — error wins over
+  // partial data so the ViewState type never says "data" while a
+  // connection error is in flight.
+  const viewState = deriveDashboardViewState({
+    metrics,
+    connectionStatus,
+    lastError,
+    retry: reconnect,
+  });
 
   // ---- traffic chart accumulator -----------------------------------------
   //
@@ -150,13 +156,25 @@ export default function DashboardView({
 
   // ---- KPI cards -----------------------------------------------------------
   //
-  // The cards are derived from the live payload. While loading we
-  // render four skeleton placeholders that match the real cards'
-  // dimensions. Skeletons live behind `kpi-card-N-skeleton` ids so
-  // tests (and future state toggles) can target them precisely.
-  const kpiData: KPI[] | null = isLoading
-    ? null
-    : [
+  // The cards are derived from the live payload. The ViewState drives
+  // which sub-tree to render:
+  //   - loading → 4 skeleton placeholders (no value text).
+  //   - data    → 4 real KPI cards.
+  //   - empty   → "No hay tráfico" container; the KPI grid is
+  //               REPLACED (spec: error/empty states must not render
+  //               partial data underneath).
+  //   - error   → if metrics is still in the store, keep the cards
+  //               visible in the background so a transient drop
+  //               doesn't wipe the operator's screen. The banner
+  //               above still signals the failure.
+  const showKpiCards =
+    viewState.status === 'data' ||
+    (viewState.status === 'error' && metrics !== undefined);
+  const showKpiSkeletons = viewState.status === 'loading';
+  const showEmptyState = viewState.status === 'empty';
+
+  const kpiData: KPI[] | null = showKpiCards
+    ? [
         {
           title: 'Paquetes Totales',
           value: formatPacketsRate(metrics!.packets_per_sec),
@@ -189,7 +207,8 @@ export default function DashboardView({
           color: 'text-[#06b6d4]',
           icon: 'Database',
         },
-      ];
+      ]
+    : null;
 
   const handleAlertInteraction = (alert: NetworkAlert) => {
     setSelectedAlert(alert);
@@ -203,8 +222,9 @@ export default function DashboardView({
           Per spec §11.1 the copy is "Conexión SSE perdida.
           Reintentando...". The banner sits above the KPI grid so it
           is the first thing the operator sees when the stream goes
-          away. */}
-      {isError && (
+          away. Spec §12 also requires a "Reintentar" (retry) button
+          that wires up to the SSE hook's `reconnect` callback. */}
+      {viewState.status === 'error' && (
         <div
           id="sse-error-banner"
           role="alert"
@@ -214,66 +234,106 @@ export default function DashboardView({
           <span className="flex-1">
             Conexión SSE perdida. Reintentando…
           </span>
+          <button
+            id="sse-error-retry-btn"
+            type="button"
+            onClick={viewState.retry}
+            className="font-mono text-[11px] font-semibold px-2.5 py-1 rounded border border-[#ef4444]/40 hover:bg-[#ef4444]/10 transition-colors"
+          >
+            Reintentar
+          </button>
           <RefreshCw className="h-3.5 w-3.5 opacity-60 animate-spin" />
         </div>
       )}
 
-      {/* 4 KPIs Highlight cards */}
-      <div
-        id="kpi-grid"
-        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
-      >
-        {kpiData === null
-          ? // Loading state: 4 skeleton placeholders, each with a
-            // stable `kpi-card-N-skeleton` id and the same dimensions
-            // as the real card so the layout doesn't shift when data
-            // arrives.
-            [0, 1, 2, 3].map((idx) => (
-              <div
-                key={idx}
-                id={`kpi-card-${idx}-skeleton`}
-                aria-busy="true"
-                className="bg-[#131820] border border-[#2a3242] p-4 rounded-lg flex flex-col justify-between text-left select-none"
-              >
-                <div className="h-3 w-24 rounded bg-[#1c2230] animate-pulse" />
-                <div className="mt-3 h-7 w-20 rounded bg-[#1c2230] animate-pulse" />
-                <div className="mt-2 h-2.5 w-32 rounded bg-[#1c2230] animate-pulse" />
-              </div>
-            ))
-          : kpiData.map((kpi, idx) => (
-              <div
-                key={idx}
-                id={`kpi-card-${idx}`}
-                className="bg-[#131820] border border-[#2a3242] p-4 rounded-lg flex flex-col justify-between text-left hover:border-[#3b82f6]/40 transition-all select-none"
-              >
-                <div className="flex justify-between items-center">
-                  <span className="font-sans text-xs text-[#9ba3b4] font-medium tracking-wide uppercase">
-                    {kpi.title}
-                  </span>
-                  <span className="text-[#5c6473] font-mono text-sm">[]</span>
+      {/* 4 KPIs Highlight cards — driven by the ViewState. We render
+          one of three branches in this slot:
+            * empty   → "No hay tráfico" container (replaces grid).
+            * loading → 4 skeleton placeholders.
+            * data / error-with-data → 4 real KPI cards (error
+              keeps the data visible in the background per spec §12).
+            * error-no-data → no grid at all; the banner above is
+              the only signal. We deliberately do NOT fall back to
+              skeletons here because the spec says the error
+              banner carries the retry affordance. */}
+      {showEmptyState ? (
+        <div
+          id="dashboard-empty-state"
+          role="status"
+          className="bg-[#131820] border border-[#2a3242] border-dashed rounded-lg p-10 flex flex-col items-center justify-center text-center select-none"
+        >
+          <Inbox className="h-10 w-10 text-[#5c6473] mb-3" />
+          <h3 className="font-sans font-semibold text-sm text-[#e4e7eb] mb-1">
+            No hay tráfico en este momento
+          </h3>
+          <p className="font-mono text-xs text-[#9ba3b4] max-w-md">
+            {(viewState as { message: string }).message}
+          </p>
+          <button
+            type="button"
+            onClick={() => setView('captura')}
+            className="mt-4 font-mono text-xs font-semibold px-3 py-1.5 rounded border border-[#3b82f6]/40 text-[#3b82f6] hover:bg-[#3b82f6]/10 transition-colors"
+          >
+            Ir a Captura
+          </button>
+        </div>
+      ) : showKpiCards || showKpiSkeletons ? (
+        <div
+          id="kpi-grid"
+          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
+        >
+          {showKpiSkeletons
+            ? // Loading state: 4 skeleton placeholders, each with a
+              // stable `kpi-card-N-skeleton` id and the same dimensions
+              // as the real card so the layout doesn't shift when data
+              // arrives.
+              [0, 1, 2, 3].map((idx) => (
+                <div
+                  key={idx}
+                  id={`kpi-card-${idx}-skeleton`}
+                  aria-busy="true"
+                  className="bg-[#131820] border border-[#2a3242] p-4 rounded-lg flex flex-col justify-between text-left select-none"
+                >
+                  <div className="h-3 w-24 rounded bg-[#1c2230] animate-pulse" />
+                  <div className="mt-3 h-7 w-20 rounded bg-[#1c2230] animate-pulse" />
+                  <div className="mt-2 h-2.5 w-32 rounded bg-[#1c2230] animate-pulse" />
                 </div>
-                <div className="mt-2.5 flex items-baseline gap-2.5">
-                  <span className="font-sans font-bold text-[#e4e7eb] text-2xl tracking-tight">
-                    {kpi.value}
-                  </span>
-                  <span
-                    className={`font-mono text-xs font-semibold px-1.5 py-0.5 rounded ${
-                      kpi.trend === 'up'
-                        ? 'text-[#10b981]'
-                        : kpi.trend === 'down'
-                        ? 'text-[#ef4444]'
-                        : 'text-[#9ba3b4]'
-                    }`}
-                  >
-                    {kpi.change}
-                  </span>
+              ))
+            : kpiData!.map((kpi, idx) => (
+                <div
+                  key={idx}
+                  id={`kpi-card-${idx}`}
+                  className="bg-[#131820] border border-[#2a3242] p-4 rounded-lg flex flex-col justify-between text-left hover:border-[#3b82f6]/40 transition-all select-none"
+                >
+                  <div className="flex justify-between items-center">
+                    <span className="font-sans text-xs text-[#9ba3b4] font-medium tracking-wide uppercase">
+                      {kpi.title}
+                    </span>
+                    <span className="text-[#5c6473] font-mono text-sm">[]</span>
+                  </div>
+                  <div className="mt-2.5 flex items-baseline gap-2.5">
+                    <span className="font-sans font-bold text-[#e4e7eb] text-2xl tracking-tight">
+                      {kpi.value}
+                    </span>
+                    <span
+                      className={`font-mono text-xs font-semibold px-1.5 py-0.5 rounded ${
+                        kpi.trend === 'up'
+                          ? 'text-[#10b981]'
+                          : kpi.trend === 'down'
+                          ? 'text-[#ef4444]'
+                          : 'text-[#9ba3b4]'
+                      }`}
+                    >
+                      {kpi.change}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-[10px] font-mono text-[#5c6473]">
+                    <span>Últimos 60s acumulados</span>
+                  </div>
                 </div>
-                <div className="mt-1 text-[10px] font-mono text-[#5c6473]">
-                  <span>Últimos 60s acumulados</span>
-                </div>
-              </div>
-            ))}
-      </div>
+              ))}
+        </div>
+      ) : null}
 
       {/* Main Charts area */}
       <div

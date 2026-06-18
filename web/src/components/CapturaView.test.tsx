@@ -327,4 +327,84 @@ describe('CapturaView error banner', () => {
     await waitForState(() => useSSEStore.getState().captureStatus === 'running');
     expect(document.getElementById('captura-health-error-banner')).toBeNull();
   });
+
+  it('renders a "Reintentar" button inside the health error banner', async () => {
+    vi.useFakeTimers();
+    stubFetchSequence([new TypeError('Failed to fetch')]);
+    renderCaptura();
+
+    await waitForState(
+      () => document.getElementById('captura-health-error-banner') !== null,
+    );
+    expect(
+      document.getElementById('captura-health-retry-btn'),
+      'expected captura-health-retry-btn',
+    ).not.toBeNull();
+  });
+
+  it('triggers an immediate re-poll when the user clicks "Reintentar"', async () => {
+    vi.useFakeTimers();
+    // Two responses so the second one (after retry) is the one that
+    // resolves the assertion.
+    const mockFetch = stubFetchSequence([
+      new TypeError('Failed to fetch'),
+      new TypeError('Failed to fetch'),
+      jsonResponse(okHealth('ok')),
+    ]);
+    renderCaptura();
+
+    await waitForState(
+      () => document.getElementById('captura-health-error-banner') !== null,
+    );
+    // First poll has happened (and failed).
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    const retryBtn = document.getElementById('captura-health-retry-btn') as HTMLButtonElement;
+    expect(retryBtn).not.toBeNull();
+
+    await act(async () => {
+      retryBtn.click();
+    });
+    // Clicking the button should have re-triggered the effect and
+    // fired a second fetch immediately, without waiting for the 2s
+    // interval.
+    expect(mockFetch.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Empty state (spec §12 — "No hay captura configurada")
+// ---------------------------------------------------------------------------
+
+describe('CapturaView empty state', () => {
+  it('shows the empty state when the health payload has no capture subsystem', async () => {
+    vi.useFakeTimers();
+    stubFetchSequence([
+      jsonResponse({
+        status: 'ok',
+        uptime_seconds: 5,
+        subsystems: [{ name: 'storage', status: 'ok' }],
+      }),
+    ]);
+    renderCaptura();
+
+    // The empty state lives behind `captura-empty-state` and replaces
+    // the "Estado desconocido" badge.
+    await waitForState(() => {
+      const el = document.getElementById('captura-empty-state');
+      return el !== null;
+    });
+    const empty = document.getElementById('captura-empty-state');
+    expect(empty, 'expected captura-empty-state').not.toBeNull();
+    expect(empty!.textContent).toMatch(/captura/i);
+  });
+
+  it('does not render the empty state while the first poll is still in flight', () => {
+    // On mount, before any successful poll, the view must be in
+    // "loading", not "empty".
+    useSSEStore.setState({ captureStatus: 'unknown' });
+    renderCaptura();
+
+    expect(document.getElementById('captura-empty-state')).toBeNull();
+  });
 });

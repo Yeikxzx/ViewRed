@@ -163,4 +163,94 @@ describe('DashboardView error state', () => {
 
     expect(document.getElementById('sse-error-banner')).toBeNull();
   });
+
+  it('renders a "Reintentar" button inside the error banner', () => {
+    const reconnect = vi.fn();
+    mockUseSSE.mockReturnValue({
+      lastEvent: null,
+      connectionStatus: 'disconnected',
+      error: 'connection lost',
+      reconnect,
+    });
+    useSSEStore.setState({
+      connectionStatus: 'disconnected',
+      lastError: 'connection lost',
+    });
+    renderDashboard();
+
+    const retryBtn = document.getElementById('sse-error-retry-btn');
+    expect(retryBtn, 'expected sse-error-retry-btn').not.toBeNull();
+  });
+
+  it('invokes reconnect when the user clicks "Reintentar"', () => {
+    const reconnect = vi.fn();
+    mockUseSSE.mockReturnValue({
+      lastEvent: null,
+      connectionStatus: 'disconnected',
+      error: 'connection lost',
+      reconnect,
+    });
+    useSSEStore.setState({
+      connectionStatus: 'disconnected',
+      lastError: 'connection lost',
+    });
+    renderDashboard();
+
+    const retryBtn = document.getElementById('sse-error-retry-btn') as HTMLButtonElement;
+    expect(retryBtn).not.toBeNull();
+    retryBtn.click();
+    expect(reconnect).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Empty state (spec §12 — "No hay tráfico")
+// ---------------------------------------------------------------------------
+
+describe('DashboardView empty state', () => {
+  it('shows the "No hay tráfico" empty state when all metrics are zero', () => {
+    useSSEStore.setState({
+      connectionStatus: 'connected',
+      messages: new Map([
+        [
+          METRICS_URL,
+          {
+            packets_per_sec: 0,
+            bytes_per_sec: 0,
+            active_connections: 0,
+            device_count: 0,
+          },
+        ],
+      ]),
+    });
+    renderDashboard();
+
+    const empty = document.getElementById('dashboard-empty-state');
+    expect(empty, 'expected dashboard-empty-state').not.toBeNull();
+    expect(empty!.textContent).toMatch(/No hay tráfico/i);
+  });
+
+  it('does not render the KPI cards while the empty state is shown', () => {
+    // Spec: "Empty: Render a container with an explanatory message and
+    // optional CTA". The KPI grid is data — it must not be rendered
+    // alongside the empty state.
+    useSSEStore.setState({
+      connectionStatus: 'connected',
+      messages: new Map([
+        [
+          METRICS_URL,
+          {
+            packets_per_sec: 0,
+            bytes_per_sec: 0,
+            active_connections: 0,
+            device_count: 0,
+          },
+        ],
+      ]),
+    });
+    renderDashboard();
+
+    expect(document.getElementById('kpi-card-0')).toBeNull();
+    expect(document.getElementById('kpi-card-0-skeleton')).toBeNull();
+  });
 });

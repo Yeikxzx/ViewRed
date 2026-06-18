@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Radio,
   Pause,
@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   WifiOff,
   RefreshCw,
+  Inbox,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -23,6 +24,7 @@ import {
 } from 'recharts';
 import { storageHistory } from '../data/mockData';
 import { useSSEStore, type CaptureStatus } from '../store/sse-store';
+import { deriveCapturaViewState } from '../lib/view-state';
 
 interface CapturaViewProps {
   isCapturing: boolean;
@@ -77,6 +79,18 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
   // `setLastError` for any future consumer that wants to surface a
   // generic "backend unreachable" state.
   const [healthError, setHealthError] = useState<string | null>(null);
+  // `hasPolled` flips to true the first time a poll finishes — even
+  // if it errored. We need this to disambiguate "loading" (no poll
+  // has resolved yet) from "empty" (we polled and the backend has
+  // no `capture` subsystem). Without this flag both branches would
+  // map to the same `captureStatus === 'unknown'` and we could not
+  // satisfy spec §12.
+  const [hasPolled, setHasPolled] = useState(false);
+  // `retryCount` is incremented by the "Reintentar" button in the
+  // error banner. Including it in the effect's dependency list
+  // forces an immediate re-poll, so clicking retry is a true
+  // "retry now" (it does not wait for the next 2s tick).
+  const [retryCount, setRetryCount] = useState(0);
   const setStoreCaptureStatus = useSSEStore((s) => s.setCaptureStatus);
   const setStoreLastError = useSSEStore((s) => s.setLastError);
   const captureStatus = useSSEStore((s) => s.captureStatus);
@@ -84,11 +98,12 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
 
   // ---- Health polling effect ---------------------------------------------
   //
-  // Fetches /api/v1/health immediately on mount and then every 2s. The
-  // captured promise is held in a ref so a slow response from a
-  // previous tick can never overwrite a fresher result. The interval
-  // is cleared on unmount to avoid leaking timers into the next test
-  // or the next route the user navigates to.
+  // Fetches /api/v1/health immediately on mount (or on retry) and
+  // then every 2s. The captured promise is held in a ref so a slow
+  // response from a previous tick can never overwrite a fresher
+  // result. The interval is cleared on unmount to avoid leaking
+  // timers into the next test or the next route the user navigates
+  // to.
   useEffect(() => {
     let cancelled = false;
 
@@ -120,6 +135,9 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
         setStoreCaptureStatus('unknown');
       } finally {
         inFlightRef.current = false;
+        // Mark "we have polled" regardless of success/failure so the
+        // ViewState can distinguish loading from empty.
+        if (!cancelled) setHasPolled(true);
       }
     };
 
@@ -129,7 +147,25 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
       cancelled = true;
       clearInterval(interval);
     };
-  }, [setStoreCaptureStatus, setStoreLastError]);
+  }, [setStoreCaptureStatus, setStoreLastError, retryCount]);
+
+  // "Reintentar" callback used by the spec §12 error banner. We
+  // bump `retryCount` so the polling effect re-runs; the actual
+  // fetch is the same `poll()` function defined inside the effect.
+  const retry = useCallback(() => {
+    setRetryCount((c) => c + 1);
+  }, []);
+
+  // Spec §12 ViewState. Drives which branch of the view is rendered
+  // (loading / error / empty / data). Captura's "empty" means
+  // "backend is healthy but has no capture subsystem" — distinct
+  // from "loading", which means "we haven't polled yet".
+  const viewState = deriveCapturaViewState({
+    captureStatus,
+    hasPolled,
+    healthError,
+    retry,
+  });
 
   const interfacesList = [
     'eth0 (Activa)',
@@ -172,8 +208,11 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
     <div id="captura-view-wrapper" className="space-y-6">
       {/* Health-unreachable banner — shown when the last /api/v1/health
           poll threw. Distinct from the SSE banner on the dashboard
-          because the failure source is different (HTTP, not EventSource). */}
-      {healthError && (
+          because the failure source is different (HTTP, not EventSource).
+          Spec §12 also requires a "Reintentar" (retry) button that
+          forces an immediate re-poll (we bump `retryCount` to trigger
+          the polling effect). */}
+      {viewState.status === 'error' && (
         <div
           id="captura-health-error-banner"
           role="alert"
@@ -181,9 +220,39 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
         >
           <WifiOff className="h-4 w-4 flex-shrink-0" />
           <span className="flex-1">
-            No se pudo contactar el servicio de salud ({healthError}). Reintentando cada 2s…
+            No se pudo contactar el servicio de salud ({viewState.message}). Reintentando cada 2s…
           </span>
+          <button
+            id="captura-health-retry-btn"
+            type="button"
+            onClick={viewState.retry}
+            className="font-mono text-[11px] font-semibold px-2.5 py-1 rounded border border-[#ef4444]/40 hover:bg-[#ef4444]/10 transition-colors"
+          >
+            Reintentar
+          </button>
           <RefreshCw className="h-3.5 w-3.5 opacity-60 animate-spin" />
+        </div>
+      )}
+
+      {/* Empty state (spec §12) — shown when the backend is healthy
+          but has no `capture` subsystem. Replaces the status card so
+          we don't leak the "Estado desconocido" placeholder on top
+          of a real, deliberate configuration. */}
+      {viewState.status === 'empty' && (
+        <div
+          id="captura-empty-state"
+          role="status"
+          className="bg-[#131820] border border-[#2a3242] border-dashed rounded-lg p-8 flex items-center gap-4 select-none"
+        >
+          <Inbox className="h-8 w-8 text-[#5c6473] flex-shrink-0" />
+          <div>
+            <h3 className="font-sans font-semibold text-sm text-[#e4e7eb]">
+              No hay captura configurada
+            </h3>
+            <p className="font-mono text-xs text-[#9ba3b4] mt-1">
+              {viewState.message}
+            </p>
+          </div>
         </div>
       )}
 
