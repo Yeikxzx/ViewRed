@@ -8,7 +8,11 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/viewred/viewred/internal/api/handlers"
+	"github.com/viewred/viewred/internal/api/middleware"
+	"github.com/viewred/viewred/internal/config"
 	"github.com/viewred/viewred/internal/health"
+	"github.com/viewred/viewred/internal/sse"
+	"github.com/viewred/viewred/internal/storage"
 )
 
 // NewRouter returns a configured Gin engine with all API routes mounted.
@@ -30,28 +34,120 @@ func NewRouter() *gin.Engine {
 // TestNewRouterWithRegistryExposesSubsystems for the failure mode it
 // prevents.
 func NewRouterWithRegistry(rg *health.Registry) *gin.Engine {
-	r := gin.New()
-	r.Use(gin.Recovery())
-
+	r := newBaseRouter()
 	v1 := r.Group("/api/v1")
 	{
 		v1.GET("/health", handlers.Health(rg))
 	}
+	mountWebAssets(r)
+	return r
+}
 
+// RouterDeps groups every dependency the full router needs. It is the
+// additive export seam introduced in Plan 3 Task 16: main.go (Task 17)
+// constructs a RouterDeps from its already-initialised subsystems
+// (storage, SSE broker, config, health registry) and passes it to
+// NewRouterWithDeps.
+//
+// Health, Querier, Broker, and Config are required for a router that
+// serves the production route set. CORSConfig is optional — when its
+// AllowedOrigins slice is empty the CORS middleware is omitted so a
+// same-origin deployment does not need to configure it.
+type RouterDeps struct {
+	Health     *health.Registry
+	Querier    storage.Querier
+	Broker     *sse.Broker
+	Config     *config.Config
+	CORSConfig middleware.CORSConfig
+}
+
+// NewRouterWithDeps builds a router that wires every middleware and
+// route the ViewRed API surface requires:
+//
+//	Recovery → RequestID → [CORS] → RequestLogging → routes
+//
+// The CORS middleware is only inserted when deps.CORSConfig.AllowedOrigins
+// is non-empty, so single-host deployments (e.g. the dev server bound
+// to 127.0.0.1) get the same behaviour as before without having to
+// declare a CORS policy.
+//
+// Every documented /api/v1 route is mounted: the four dashboard
+// readouts, the packet and device lists, the stub endpoints (alerts,
+// topology, vulnerabilities, config), the alert ack POST, and the
+// four SSE streams. The web-asset fallthrough is mounted last so
+// /api/* takes precedence over static files.
+func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
+	r := newBaseRouter()
+	r.Use(middleware.RequestID())
+	if len(deps.CORSConfig.AllowedOrigins) > 0 {
+		r.Use(middleware.NewCORS(deps.CORSConfig))
+	}
+	r.Use(middleware.RequestLogging())
+
+	v1 := r.Group("/api/v1")
+	{
+		v1.GET("/health", handlers.Health(deps.Health))
+		v1.GET("/dashboard/summary", handlers.DashboardSummary(deps.Querier))
+		v1.GET("/dashboard/top-talkers", handlers.TopTalkers(deps.Querier))
+		v1.GET("/dashboard/protocols", handlers.ProtocolDistribution(deps.Querier))
+		v1.GET("/packets", handlers.PacketsList(deps.Querier))
+		v1.GET("/devices", handlers.DevicesList(deps.Querier))
+		v1.GET("/alerts", handlers.AlertsList)
+		v1.POST("/alerts/:id/ack", handlers.AlertAck)
+		v1.GET("/topology", handlers.TopologyGet)
+		v1.GET("/vulnerabilities", handlers.VulnerabilitiesList)
+		v1.GET("/config", handlers.ConfigGet)
+		v1.GET("/stream/metrics", handlers.StreamMetricsHandler(handlers.StreamMetricsHandlerDeps{
+			Broker:  deps.Broker,
+			Querier: deps.Querier,
+		}))
+		v1.GET("/stream/alerts", handlers.StreamStubHandler(handlers.StreamStubHandlerDeps{
+			Broker: deps.Broker,
+			Topic:  "alerts",
+		}))
+		v1.GET("/stream/topology", handlers.StreamStubHandler(handlers.StreamStubHandlerDeps{
+			Broker: deps.Broker,
+			Topic:  "topology",
+		}))
+		v1.GET("/stream/llm", handlers.StreamStubHandler(handlers.StreamStubHandlerDeps{
+			Broker: deps.Broker,
+			Topic:  "llm",
+		}))
+	}
+
+	mountWebAssets(r)
+	return r
+}
+
+// newBaseRouter returns a gin.Engine with the always-on middleware
+// (Recovery) installed. The other middleware are added by the
+// caller (NewRouterWithRegistry adds nothing further, NewRouterWithDeps
+// adds RequestID/CORS/RequestLogging) so the back-compat router
+// stays minimal.
+func newBaseRouter() *gin.Engine {
+	r := gin.New()
+	r.Use(gin.Recovery())
+	return r
+}
+
+// mountWebAssets wires the static-asset serving on r. If the
+// built web/dist directory is present, its files are served under
+// the canonical paths; otherwise a NoRoute handler returns a
+// helpful 404 so an unbuilt UI does not crash with a generic
+// "page not found" body.
+func mountWebAssets(r *gin.Engine) {
 	if dist := findWebDist(); dist != "" {
 		r.StaticFS("/assets", http.Dir(filepath.Join(dist, "assets")))
 		r.StaticFile("/", filepath.Join(dist, "index.html"))
 		r.StaticFile("/index.html", filepath.Join(dist, "index.html"))
-	} else {
-		r.NoRoute(func(c *gin.Context) {
-			c.JSON(http.StatusNotFound, gin.H{
-				"error":   "not_found",
-				"message": "Web UI not built. Run `make web-build` or start Vite dev server.",
-			})
-		})
+		return
 	}
-
-	return r
+	r.NoRoute(func(c *gin.Context) {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error":   "not_found",
+			"message": "Web UI not built. Run `make web-build` or start Vite dev server.",
+		})
+	})
 }
 
 func findWebDist() string {
