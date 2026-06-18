@@ -44,3 +44,10 @@ data/
 # Build artifacts
 web/dist/
 web/node_modules/
+
+# Tooling local state
+.atl/
+
+# SDD review packages (large, regenerated each task)
+docs/superpowers/progress/review-*.diff
+docs/superpowers/progress/review-*.md
