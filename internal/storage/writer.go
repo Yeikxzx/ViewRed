@@ -6,21 +6,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-)
 
-// PacketEventLite is a placeholder for capture.PacketEvent (see internal/capture).
-// Task 6 will move the canonical PacketEvent to internal/capture and the writer
-// will import it. For plan 2, we use a local struct so the storage layer is
-// self-contained.
-type PacketEventLite struct {
-	Time     time.Time
-	SrcIP    string
-	DstIP    string
-	SrcPort  uint16
-	DstPort  uint16
-	Protocol string
-	Length   int
-}
+	"github.com/viewred/viewred/internal/capture"
+)
 
 // WriterStats tracks the writer's runtime metrics.
 type WriterStats struct {
@@ -29,9 +17,9 @@ type WriterStats struct {
 	BatchesSent uint64
 }
 
-// Writer batches PacketEventLite values and inserts them into the packets table.
-// It implements a backpressure strategy: if the DB is slow, the channel is
-// read non-blockingly and overflow is counted in Dropped.
+// Writer batches capture.PacketEvent values and inserts them into the packets
+// table. It implements a backpressure strategy: if the DB is slow, the channel
+// is read non-blockingly and overflow is counted in Dropped.
 type Writer struct {
 	pool       *pgxpool.Pool
 	batchSize  int
@@ -57,13 +45,13 @@ func NewWriter(s *Storage) *Writer {
 
 // Run consumes events from the channel and writes them in batches. It blocks
 // until ctx is cancelled or the channel is closed.
-func (w *Writer) Run(ctx context.Context, events <-chan PacketEventLite) {
+func (w *Writer) Run(ctx context.Context, events <-chan capture.PacketEvent) {
 	if w.pool == nil {
 		log.Printf("storage.Writer: nil pool, exiting Run")
 		return
 	}
 
-	batch := make([]PacketEventLite, 0, w.batchSize)
+	batch := make([]capture.PacketEvent, 0, w.batchSize)
 	ticker := time.NewTicker(w.flushEvery)
 	defer ticker.Stop()
 
@@ -103,7 +91,7 @@ func (w *Writer) Run(ctx context.Context, events <-chan PacketEventLite) {
 
 // insertBatch writes a single batch using a single multi-row INSERT via UNNEST.
 // This avoids per-row round-trips and lets PostgreSQL plan a single statement.
-func (w *Writer) insertBatch(ctx context.Context, batch []PacketEventLite) error {
+func (w *Writer) insertBatch(ctx context.Context, batch []capture.PacketEvent) error {
 	if len(batch) == 0 {
 		return nil
 	}
@@ -118,15 +106,14 @@ func (w *Writer) insertBatch(ctx context.Context, batch []PacketEventLite) error
 	previews := make([][]byte, len(batch))
 
 	for i, e := range batch {
-		times[i] = e.Time
+		times[i] = e.Timestamp
 		srcIPs[i] = e.SrcIP
 		dstIPs[i] = e.DstIP
 		srcPorts[i] = int(e.SrcPort)
 		dstPorts[i] = int(e.DstPort)
 		protocols[i] = e.Protocol
 		lengths[i] = e.Length
-		// payload preview is a future task; nil for now
-		previews[i] = nil
+		previews[i] = e.PayloadPreview
 	}
 
 	_, err := w.pool.Exec(ctx,

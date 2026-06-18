@@ -7,13 +7,9 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-)
 
-// packetEventLite is a placeholder alias for the writer's PacketEventLite type
-// (the local placeholder struct defined in writer.go; Task 6 will replace it
-// with capture.PacketEvent). Using an alias keeps the rest of the test file
-// readable while documenting the eventual migration target.
-type packetEventLite = PacketEventLite
+	"github.com/viewred/viewred/internal/capture"
+)
 
 func TestWriterBatchesAndInserts(t *testing.T) {
 	db, sm, err := sqlmock.New()
@@ -107,7 +103,7 @@ func TestWriterRunExitsImmediatelyWithNilPool(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	ch := make(chan packetEventLite, 4)
+	ch := make(chan capture.PacketEvent, 4)
 	done := make(chan struct{})
 	go func() {
 		w.Run(ctx, ch)
