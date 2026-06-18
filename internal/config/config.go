@@ -22,10 +22,10 @@ type ServerConfig struct {
 }
 
 type AIConfig struct {
-	OllamaURL           string  `yaml:"ollama_url"`
-	OllamaModel         string  `yaml:"ollama_model"`
-	MLAnomalyThreshold  float64 `yaml:"ml_anomaly_threshold"`
-	LLMTemperature      float64 `yaml:"llm_temperature"`
+	OllamaURL          string  `yaml:"ollama_url"`
+	OllamaModel        string  `yaml:"ollama_model"`
+	MLAnomalyThreshold float64 `yaml:"ml_anomaly_threshold"`
+	LLMTemperature     float64 `yaml:"llm_temperature"`
 }
 
 type ScannerConfig struct {

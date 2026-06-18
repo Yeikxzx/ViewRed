@@ -117,3 +117,15 @@ func TestWriterRunExitsImmediatelyWithNilPool(t *testing.T) {
 		t.Fatal("Run did not exit within 200ms when pool is nil")
 	}
 }
+
+// TestFinalFlushTimeoutMatchesSpec is a regression test for
+// CRITICAL #4 (final batch dropped on shutdown). The fix is that
+// Writer.Run uses a fresh context with a 10-second timeout for the
+// final flush, NOT the cancelled run context. This constant is the
+// only thing that pins down the spec-mandated 10-second budget; if
+// it is changed in error, this test fails.
+func TestFinalFlushTimeoutMatchesSpec(t *testing.T) {
+	if finalFlushTimeout != 10*time.Second {
+		t.Fatalf("finalFlushTimeout = %v, spec §9.3 requires 10s", finalFlushTimeout)
+	}
+}

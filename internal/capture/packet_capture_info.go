@@ -16,9 +16,9 @@ import "github.com/google/gopacket"
 // hot path when the main goroutine pipes events to the pcap writer.
 func ToCaptureInfo(e PacketEvent) gopacket.CaptureInfo {
 	return gopacket.CaptureInfo{
-		Timestamp:      e.Timestamp,
-		CaptureLength:  len(e.PayloadPreview),
-		Length:         e.Length,
+		Timestamp:     e.Timestamp,
+		CaptureLength: len(e.PayloadPreview),
+		Length:        e.Length,
 	}
 }
 

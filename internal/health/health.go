@@ -4,6 +4,7 @@ package health
 
 import (
 	"context"
+	"regexp"
 	"sync"
 	"time"
 )
@@ -26,9 +27,9 @@ type Subsystem struct {
 
 // Report is the full health snapshot returned by the API.
 type Report struct {
-	Status         Status      `json:"status"`
-	UptimeSeconds  int64       `json:"uptime_seconds"`
-	Subsystems     []Subsystem `json:"subsystems"`
+	Status        Status      `json:"status"`
+	UptimeSeconds int64       `json:"uptime_seconds"`
+	Subsystems    []Subsystem `json:"subsystems"`
 }
 
 // checkFunc is a user-supplied function that probes a subsystem.
@@ -59,6 +60,11 @@ func (r *Registry) Add(name string, check checkFunc) {
 
 // Check runs all registered checks and returns an aggregated Report.
 // Subsystems are returned in registration order.
+//
+// Error details are sanitized via SanitizeDetail before being placed
+// in the report — this prevents accidental leakage of credentials that
+// may be embedded in error messages (e.g. the pgxpool ping error
+// includes the DSN, which contains the database password).
 func (r *Registry) Check(ctx context.Context) Report {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -70,7 +76,7 @@ func (r *Registry) Check(ctx context.Context) Report {
 		sub := Subsystem{Name: name, Status: StatusOK}
 		if err := check(ctx); err != nil {
 			sub.Status = StatusDown
-			sub.Detail = err.Error()
+			sub.Detail = SanitizeDetail(err.Error())
 			anyDown = true
 			allOK = false
 		}
@@ -109,4 +115,33 @@ func (r *Registry) Healthy() bool {
 	// Synchronous check (small cost).
 	report := r.Check(context.Background())
 	return report.Status == StatusOK
+}
+
+// urlUserinfo matches the userinfo component of a URL
+// (scheme://user:pass@host/...). The scheme part is preserved so the
+// log remains useful (you can still tell that a Postgres DSN was
+// redacted, not a generic error). The user:pass part is replaced with
+// "***:***".
+var urlUserinfo = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.\-]*://)([^@\s/]+)@`)
+
+// SanitizeDetail redacts credentials from URLs embedded in error
+// messages. The pgxpool Ping error, for example, embeds the full DSN
+// (which contains the database password) into its message. Exposing
+// that to the /api/v1/health endpoint would leak the password to any
+// caller.
+//
+// The redaction preserves the scheme and host so the error remains
+// useful for debugging:
+//
+//	postgres://user:secret@host:5432/db
+//	                  ↓
+//	postgres://***:***@host:5432/db
+//
+// The redaction is applied to every URL-shaped substring in the input,
+// so an error containing multiple URLs is handled correctly.
+func SanitizeDetail(s string) string {
+	if s == "" {
+		return s
+	}
+	return urlUserinfo.ReplaceAllString(s, `${1}***:***@`)
 }

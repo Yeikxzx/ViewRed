@@ -4,9 +4,6 @@ import (
 	"context"
 	"testing"
 	"time"
-
-	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestNewValidatesDSN(t *testing.T) {
@@ -39,17 +36,4 @@ func TestStorageHealthyReflectsState(t *testing.T) {
 	if !s.Healthy() {
 		t.Fatal("Storage with healthy=true should be healthy")
 	}
-}
-
-func TestStoragePingUsesPool(t *testing.T) {
-	// This test is illustrative — sqlmock + pgxpool integration is non-trivial.
-	// We test the timeout path instead: if the context is cancelled, Ping returns.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // immediate cancel
-
-	// We can't construct a real Storage without a DSN parse; skip the actual
-	// Ping test. The New+DSN-validation test above is sufficient for plan 2.
-	_ = ctx
-	_ = pgxpool.Pool{}
-	_, _, _ = sqlmock.New()
 }

@@ -14,17 +14,22 @@ import (
 // NewRouter returns a configured Gin engine with all API routes mounted.
 // API routes are versioned under /api/v1.
 //
-// The router creates a fresh, empty health.Registry internally for plan 2.
-// Task 14 (main.go wiring) is expected to register the real subsystem
-// checks before serving traffic. Tests can pass a pre-populated registry
-// via newRouterWithRegistry if they need to assert on subsystem state.
+// The router creates a fresh, empty health.Registry internally for callers
+// that do not need to pre-populate subsystem checks (e.g. unit tests of
+// the static asset serving path). Production wiring should use
+// NewRouterWithRegistry to inject a registry populated with the real
+// subsystem checks (storage ping, capture stats, etc.).
 func NewRouter() *gin.Engine {
-	return newRouterWithRegistry(health.New())
+	return NewRouterWithRegistry(health.New())
 }
 
-// newRouterWithRegistry builds a router that uses the given health registry
-// for the /api/v1/health endpoint.
-func newRouterWithRegistry(rg *health.Registry) *gin.Engine {
+// NewRouterWithRegistry builds a router that uses the given health
+// registry for the /api/v1/health endpoint. Callers (typically main.go)
+// register subsystem checks on rg before passing it in. This is the
+// export seam for the health wiring — see the regression test
+// TestNewRouterWithRegistryExposesSubsystems for the failure mode it
+// prevents.
+func NewRouterWithRegistry(rg *health.Registry) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 
