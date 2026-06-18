@@ -716,8 +716,8 @@ Three task groups. Each handler:
 #### Task 10: Dashboard handlers
 
 **Files:**
-- Create: `internal/api/handlers/dashboard.go`
-- Create: `internal/api/handlers/dashboard_test.go`
+- Create: `internal/api/handlers/dashboard.go` ✅
+- Create: `internal/api/handlers/dashboard_test.go` ✅
 
 Three handlers in one file: `DashboardSummary`, `TopTalkers`, `ProtocolDistribution`. Each takes `storage.Querier` and returns JSON.
 
