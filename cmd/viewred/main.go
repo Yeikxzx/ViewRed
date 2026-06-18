@@ -197,17 +197,19 @@ func main() {
 	stopWire := wire.Start(ctx)
 
 	// Cleanup defer for the wire-up. Order matters:
-	//   1. broker.Shutdown — close every client channel so SSE
-	//      handlers return and any in-flight requests drain.
-	//   2. cancel() — signal the metrics ticker and broker Run
+	//   1. cancel() — signal the metrics ticker and broker Run
 	//      goroutines to exit on their next select iteration.
-	//   3. stopWire() — block until both goroutines have actually
+	//   2. stopWire() — block until both goroutines have actually
 	//      exited. The single-defer pattern makes the order
 	//      explicit instead of relying on LIFO trivia.
+	//
+	// The broker's own Shutdown is NOT in this defer: the explicit
+	// shutdown.Shutdown call below passes wire.Broker via
+	// shutdown.Params, so the broker is shut down in the right
+	// position (after the HTTP server, before storage). Doing it
+	// here would put it AFTER storage.Close, violating the spec
+	// order (server -> broker -> store).
 	defer func() {
-		if err := wire.Broker.Shutdown(context.Background()); err != nil {
-			log.Printf("broker shutdown: %v", err)
-		}
 		cancel()
 		stopWire()
 	}()
@@ -242,6 +244,14 @@ func main() {
 
 	// Explicit, ordered teardown. This is the primary shutdown path;
 	// the defers above are a safety net for panics.
+	//
+	// Broker is wired from wire.Broker so the broker shuts down
+	// inside shutdown.Shutdown's ordered teardown (after the HTTP
+	// server, before storage). Without this field the explicit
+	// shutdown.Shutdown would skip the broker entirely and a
+	// separate defer would have to call wire.Broker.Shutdown,
+	// running it AFTER storage.Close and violating the spec order
+	// (server -> broker -> store).
 	if err := shutdown.Shutdown(shutdown.Params{
 		Capturer:   captureAdapter{cap},
 		Packets:    packets,
@@ -249,6 +259,7 @@ func main() {
 		Storage:    storeAdapter{store},
 		Writer:     writerAdapter{writer},
 		Server:     httpServer,
+		Broker:     wire.Broker,
 	}); err != nil {
 		log.Printf("shutdown: %v", err)
 	}
