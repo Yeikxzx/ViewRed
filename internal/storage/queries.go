@@ -87,3 +87,93 @@ func (s *Storage) QueryDashboardSummary(ctx context.Context, since time.Time) (D
 	}
 	return summary, nil
 }
+
+// QueryTopTalkers — design constraints (see plan §Task 6 and
+// docs/superpowers/designs/2026-06-18-core-api-and-ui-shell.md §3):
+//
+//   - Aggregate by IP whether it appears as src or dst. A packet from
+//     A to B contributes `length` bytes to A's bucket AND to B's
+//     bucket; the bar chart then shows the noisiest devices on the
+//     local network regardless of traffic direction.
+//   - The result slice must be empty (not nil) when no rows match, so
+//     the JSON encoder emits "[]" — handlers and JS clients don't
+//     have to special-case nil.
+//   - limit is clamped to [1, 100] before reaching SQL. The cap is
+//     applied in code (not just SQL) so a buggy handler cannot ask
+//     for an unbounded result set; storage is the last line of
+//     defence against runaway queries against the packets hypertable.
+//   - The query filters by `time >= $1` so TimescaleDB can prune
+//     chunks. Dropping the predicate would do a full hypertable scan
+//     on every poll.
+//
+// Defaults: limit <= 0 → 10. This is the same default the handler
+// applies when ?limit= is missing, so the two layers agree.
+const defaultTopTalkersLimit = 10
+const maxTopTalkersLimit = 100
+
+// qTopTalkers aggregates bytes per IP across both src and dst columns
+// and returns the top N rows. The CTE form makes the dual projection
+// obvious to a reader; an inline UNION ALL in the FROM clause is
+// functionally equivalent but harder to scan.
+//
+// The inner SELECTs both carry the same `time >= $1` predicate so
+// TimescaleDB can prune chunks inside each arm. Pulling the filter
+// out of the CTE body would re-introduce a full-hypertable scan.
+const qTopTalkers = `
+WITH combined AS (
+    SELECT src_ip AS ip, length AS bytes
+    FROM packets
+    WHERE time >= $1
+    UNION ALL
+    SELECT dst_ip AS ip, length AS bytes
+    FROM packets
+    WHERE time >= $1
+)
+SELECT ip, SUM(bytes)::bigint AS bytes
+FROM combined
+GROUP BY ip
+ORDER BY bytes DESC
+LIMIT $2
+`
+
+// QueryTopTalkers returns the top-N IPs by total bytes (src or dst)
+// observed in the window [since, now). The result is ordered by bytes
+// descending. An empty window produces an empty (non-nil) slice and a
+// nil error, per the spec.
+func (s *Storage) QueryTopTalkers(ctx context.Context, since time.Time, limit int) ([]TopTalker, error) {
+	if s.db == nil {
+		return nil, errStorageNotInitialized
+	}
+
+	// Clamp limit in code. The handler also defaults/clips, but doing
+	// it here means a future caller (e.g. a CLI tool, an SSE ticker's
+	// internal sampling) cannot bypass the cap.
+	if limit <= 0 {
+		limit = defaultTopTalkersLimit
+	}
+	if limit > maxTopTalkersLimit {
+		limit = maxTopTalkersLimit
+	}
+
+	rows, err := s.db.QueryContext(ctx, qTopTalkers, since, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Pre-allocate an empty slice (not nil) so JSON encodes "[]" when
+	// the time window has no rows. Handlers can pass the result
+	// straight to the JSON encoder.
+	talkers := make([]TopTalker, 0)
+	for rows.Next() {
+		var t TopTalker
+		if err := rows.Scan(&t.IP, &t.Bytes); err != nil {
+			return nil, err
+		}
+		talkers = append(talkers, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return talkers, nil
+}
