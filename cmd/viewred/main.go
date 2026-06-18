@@ -26,7 +26,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/viewred/viewred/internal/api"
 	"github.com/viewred/viewred/internal/capture"
 	"github.com/viewred/viewred/internal/config"
 	"github.com/viewred/viewred/internal/health"
@@ -60,8 +59,12 @@ func main() {
 	// SEPARATE context so its final batch is not lost when this one
 	// is cancelled — the shutdown function passes a fresh context to
 	// Writer.Flush.
+	//
+	// We do NOT defer cancel() here; the wireUp cleanup defer
+	// further down owns the cancellation sequence (broker.Shutdown →
+	// cancel → stopWire) so the goroutines always see a consistent
+	// order on both the signal and the panic path.
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
 
 	// Initialize storage
 	var store *storage.Storage
@@ -175,14 +178,47 @@ func main() {
 		return nil
 	})
 
+	// Build the wire-up (SSE broker + metrics ticker + router).
+	// When storage is up, the real *Storage is the Querier; when it
+	// is down, an ErrorQuerier is injected so every handler maps to
+	// 503 uniformly without any nil checks.
+	var querier storage.Querier
+	if store != nil {
+		querier = store
+	} else {
+		querier = &storage.ErrorQuerier{Err: errors.New("storage unavailable")}
+	}
+	wire := newWireUp(&cfg, rg, querier)
+
+	// Start the SSE broker and the 1Hz metrics ticker in
+	// goroutines. The returned stop function blocks until both
+	// goroutines have exited, so it is safe to call in the
+	// shutdown defer below.
+	stopWire := wire.Start(ctx)
+
+	// Cleanup defer for the wire-up. Order matters:
+	//   1. broker.Shutdown — close every client channel so SSE
+	//      handlers return and any in-flight requests drain.
+	//   2. cancel() — signal the metrics ticker and broker Run
+	//      goroutines to exit on their next select iteration.
+	//   3. stopWire() — block until both goroutines have actually
+	//      exited. The single-defer pattern makes the order
+	//      explicit instead of relying on LIFO trivia.
+	defer func() {
+		if err := wire.Broker.Shutdown(context.Background()); err != nil {
+			log.Printf("broker shutdown: %v", err)
+		}
+		cancel()
+		stopWire()
+	}()
+
 	// Start the API server. We use a real *http.Server (not
 	// gin.Engine.Run) so we can call Shutdown(ctx) on it for a
 	// graceful drain in the shutdown sequence.
 	addr := fmt.Sprintf("%s:%d", cfg.Server.BindAddress, cfg.Server.Port)
-	router := api.NewRouterWithRegistry(rg)
 	httpServer := &http.Server{
 		Addr:    addr,
-		Handler: router,
+		Handler: wire.Router,
 	}
 	log.Printf("ViewRed %s listening on http://%s", Version, addr)
 
