@@ -43,6 +43,11 @@ func TestStorage_HasQueryPackets(t *testing.T) {
 	_ = s.QueryPackets
 }
 
+func TestStorage_HasQueryDevices(t *testing.T) {
+	var s *Storage
+	_ = s.QueryDevices
+}
+
 // newMockStorage wires a *Storage around a sqlmock-backed *sql.DB so we
 // can exercise the query methods without a real database. The pool and
 // healthy fields are left at their zero values because none of the
@@ -814,5 +819,324 @@ func TestQueryPackets_SQLFiltersBySrcAndDstIP(t *testing.T) {
 	}
 	if !strings.Contains(qPacketsCount, "dst_ip") {
 		t.Errorf("packets count SQL must reference dst_ip\nGot:\n%s", qPacketsCount)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// QueryDevices
+//
+// Returns a paginated, ordered slice of discovered devices plus the total
+// count of rows that match (for the UI's "page N of M" controls). The
+// contract is:
+//
+//   - Empty result returns a non-nil, zero-length slice and totalCount=0 so
+//     JSON encodes "[]" and the device list UI renders an empty state
+//     without nil-deref.
+//   - Limit defaults to 50 when zero/negative and caps at 500. The cap is
+//     enforced in code (not just in SQL) so a buggy handler cannot ask for
+//     an unbounded result set against the devices table.
+//   - totalCount is computed via a separate SELECT COUNT(*) (no LIMIT/OFFSET
+//     applied) so the UI can render page N of M consistently even when
+//     LIMIT/OFFSET shrinks the visible slice.
+//   - Devices are ordered by `last_seen DESC` so the most recently active
+//     devices appear first. Without an explicit ORDER BY, Postgres is free
+//     to return rows in any order and the UI's stable scrollback is broken.
+//   - DB errors propagate so the HTTP handler can map them to 503.
+//   - Nullable columns (mac, vendor, hostname, risk_score) are scanned via
+//     sql.NullX wrappers and translated to zero-value Go strings / a nil
+//     *float64 so the JSON contract matches the design doc §3.
+//
+// Defaults: limit <= 0 → 50. This matches the spec's pagination default and
+// is the same default the handler applies when ?limit= is missing, so the
+// two layers agree.
+// ---------------------------------------------------------------------------
+
+// Happy path: SQL returns two device rows and the COUNT(*) returns 7. The
+// method must scan the rows into Device values (with NULLable columns
+// handled) and return totalCount separately so the UI can render page
+// 1 of (7/Limit).
+func TestQueryDevices_ReturnsDevicesAndCount(t *testing.T) {
+	s, mock, cleanup := newMockStorage(t)
+	defer cleanup()
+
+	now := time.Now()
+	firstSeen := now.Add(-2 * time.Hour)
+	lastSeen := now
+	risk := 0.85
+
+	deviceRows := sqlmock.NewRows([]string{
+		"id", "ip", "mac", "vendor", "hostname", "first_seen", "last_seen", "risk_score",
+	}).
+		AddRow(int64(1), "10.0.0.1", "aa:bb:cc:dd:ee:01", "Acme", "laptop-1", firstSeen, lastSeen, risk).
+		AddRow(int64(2), "10.0.0.2", "aa:bb:cc:dd:ee:02", nil, nil, firstSeen, lastSeen, nil)
+
+	mock.ExpectQuery(qDevices).
+		WithArgs(50, 0).
+		WillReturnRows(deviceRows)
+	mock.ExpectQuery(qDevicesCount).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(7)))
+
+	filter := DeviceFilter{Limit: 50, Offset: 0}
+	got, total, err := s.QueryDevices(context.Background(), filter)
+	if err != nil {
+		t.Fatalf("QueryDevices: unexpected error: %v", err)
+	}
+	if total != 7 {
+		t.Errorf("totalCount: got %d, want 7", total)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 devices, got %d (%+v)", len(got), got)
+	}
+
+	// Device 0: all columns populated.
+	if got[0].ID != 1 {
+		t.Errorf("device[0].ID: got %d, want 1", got[0].ID)
+	}
+	if got[0].IP != "10.0.0.1" {
+		t.Errorf("device[0].IP: got %q, want %q", got[0].IP, "10.0.0.1")
+	}
+	if got[0].MAC != "aa:bb:cc:dd:ee:01" {
+		t.Errorf("device[0].MAC: got %q, want %q", got[0].MAC, "aa:bb:cc:dd:ee:01")
+	}
+	if got[0].Vendor != "Acme" {
+		t.Errorf("device[0].Vendor: got %q, want %q", got[0].Vendor, "Acme")
+	}
+	if got[0].Hostname != "laptop-1" {
+		t.Errorf("device[0].Hostname: got %q, want %q", got[0].Hostname, "laptop-1")
+	}
+	if !got[0].FirstSeen.Equal(firstSeen) {
+		t.Errorf("device[0].FirstSeen: got %v, want %v", got[0].FirstSeen, firstSeen)
+	}
+	if !got[0].LastSeen.Equal(lastSeen) {
+		t.Errorf("device[0].LastSeen: got %v, want %v", got[0].LastSeen, lastSeen)
+	}
+	if got[0].RiskScore == nil {
+		t.Fatal("device[0].RiskScore: got nil, want non-nil")
+	}
+	if *got[0].RiskScore != risk {
+		t.Errorf("device[0].RiskScore: got %v, want %v", *got[0].RiskScore, risk)
+	}
+
+	// Device 1: nullable columns (vendor, hostname, risk_score) are NULL in
+	// the row and must be translated to zero-value strings / nil pointer.
+	if got[1].ID != 2 {
+		t.Errorf("device[1].ID: got %d, want 2", got[1].ID)
+	}
+	if got[1].IP != "10.0.0.2" {
+		t.Errorf("device[1].IP: got %q, want %q", got[1].IP, "10.0.0.2")
+	}
+	if got[1].MAC != "aa:bb:cc:dd:ee:02" {
+		t.Errorf("device[1].MAC: got %q, want %q", got[1].MAC, "aa:bb:cc:dd:ee:02")
+	}
+	if got[1].Vendor != "" {
+		t.Errorf("device[1].Vendor: got %q, want empty (NULL column)", got[1].Vendor)
+	}
+	if got[1].Hostname != "" {
+		t.Errorf("device[1].Hostname: got %q, want empty (NULL column)", got[1].Hostname)
+	}
+	if got[1].RiskScore != nil {
+		t.Errorf("device[1].RiskScore: got %v, want nil (NULL column)", *got[1].RiskScore)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet sqlmock expectations: %v", err)
+	}
+}
+
+// Empty result: SQL returns zero rows. The method MUST return a non-nil
+// empty slice and totalCount=0 so the JSON encoder emits "[]" and the UI
+// renders an empty state without nil-deref.
+func TestQueryDevices_EmptyResultReturnsEmptySlice(t *testing.T) {
+	s, mock, cleanup := newMockStorage(t)
+	defer cleanup()
+
+	mock.ExpectQuery(qDevices).
+		WithArgs(50, 0).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "ip", "mac", "vendor", "hostname", "first_seen", "last_seen", "risk_score",
+		})) // no AddRow
+
+	mock.ExpectQuery(qDevicesCount).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(0)))
+
+	got, total, err := s.QueryDevices(context.Background(), DeviceFilter{})
+	if err != nil {
+		t.Fatalf("QueryDevices on empty result: unexpected error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected non-nil empty slice, got nil")
+	}
+	if len(got) != 0 {
+		t.Errorf("expected len 0, got %d (%+v)", len(got), got)
+	}
+	if total != 0 {
+		t.Errorf("expected totalCount 0, got %d", total)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet sqlmock expectations: %v", err)
+	}
+}
+
+// DB error on the SELECT: the data query must surface a non-nil error so
+// the handler can map it to 503. The COUNT query must not run.
+func TestQueryDevices_PropagatesDBErrorOnSelect(t *testing.T) {
+	s, mock, cleanup := newMockStorage(t)
+	defer cleanup()
+
+	sentinel := errors.New("connection reset by peer")
+	mock.ExpectQuery(qDevices).
+		WithArgs(50, 0).
+		WillReturnError(sentinel)
+
+	_, _, err := s.QueryDevices(context.Background(), DeviceFilter{})
+	if err == nil {
+		t.Fatal("expected error from QueryDevices, got nil")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("expected wrapped sentinel error, got %v", err)
+	}
+}
+
+// DB error on the COUNT query: the data query succeeded but the count
+// failed. The method must still surface the error so the handler can
+// map it to 503 (and not silently return a partial result).
+func TestQueryDevices_PropagatesDBErrorOnCount(t *testing.T) {
+	s, mock, cleanup := newMockStorage(t)
+	defer cleanup()
+
+	sentinel := errors.New("connection reset by peer")
+	mock.ExpectQuery(qDevices).
+		WithArgs(50, 0).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "ip", "mac", "vendor", "hostname", "first_seen", "last_seen", "risk_score",
+		}))
+	mock.ExpectQuery(qDevicesCount).
+		WillReturnError(sentinel)
+
+	_, _, err := s.QueryDevices(context.Background(), DeviceFilter{})
+	if err == nil {
+		t.Fatal("expected error from QueryDevices (count), got nil")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("expected wrapped sentinel error, got %v", err)
+	}
+}
+
+// Defensive: a *Storage{} literal (zero value, no db) must not panic.
+// The nil-db guard returns the same error as the other query methods so
+// handlers can treat them uniformly.
+func TestQueryDevices_NilDBReturnsError(t *testing.T) {
+	s := &Storage{} // pool and db both nil
+	_, _, err := s.QueryDevices(context.Background(), DeviceFilter{})
+	if err == nil {
+		t.Fatal("expected error when db is nil, got nil")
+	}
+}
+
+// Limit cap: a caller asking for 5000 rows must be clamped to 500 before
+// the SQL is sent. The cap is enforced in code (not just in SQL) so a
+// buggy handler cannot request an unbounded result set against the
+// devices table.
+func TestQueryDevices_CapsLimitAt500(t *testing.T) {
+	s, mock, cleanup := newMockStorage(t)
+	defer cleanup()
+
+	mock.ExpectQuery(qDevices).
+		WithArgs(500, 0). // caller asked for 5000, we send 500
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "ip", "mac", "vendor", "hostname", "first_seen", "last_seen", "risk_score",
+		}))
+	mock.ExpectQuery(qDevicesCount).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(0)))
+
+	if _, _, err := s.QueryDevices(context.Background(), DeviceFilter{Limit: 5000}); err != nil {
+		t.Fatalf("QueryDevices: unexpected error: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet sqlmock expectations: %v", err)
+	}
+}
+
+// Limit floor: a caller passing 0 or negative must get the spec default
+// (50). The SQL is still called with the clamped limit so the device list
+// never silently shows no data because the handler passed a bogus limit.
+func TestQueryDevices_NonPositiveLimitDefaultsTo50(t *testing.T) {
+	s, mock, cleanup := newMockStorage(t)
+	defer cleanup()
+
+	mock.ExpectQuery(qDevices).
+		WithArgs(50, 0).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "ip", "mac", "vendor", "hostname", "first_seen", "last_seen", "risk_score",
+		}))
+	mock.ExpectQuery(qDevicesCount).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(0)))
+
+	if _, _, err := s.QueryDevices(context.Background(), DeviceFilter{Limit: 0}); err != nil {
+		t.Fatalf("QueryDevices(0): unexpected error: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet sqlmock expectations: %v", err)
+	}
+}
+
+// Pagination: offset must be forwarded to the SQL so the UI can fetch
+// page N by passing offset = N*limit. Without this, the device list
+// page control is broken.
+func TestQueryDevices_OffsetPropagatesToSQL(t *testing.T) {
+	s, mock, cleanup := newMockStorage(t)
+	defer cleanup()
+
+	mock.ExpectQuery(qDevices).
+		WithArgs(25, 100).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "ip", "mac", "vendor", "hostname", "first_seen", "last_seen", "risk_score",
+		}))
+	mock.ExpectQuery(qDevicesCount).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(125)))
+
+	if _, total, err := s.QueryDevices(context.Background(), DeviceFilter{Limit: 25, Offset: 100}); err != nil {
+		t.Fatalf("QueryDevices: unexpected error: %v", err)
+	} else if total != 125 {
+		t.Errorf("totalCount: got %d, want 125", total)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet sqlmock expectations: %v", err)
+	}
+}
+
+// SQL contract: the data query must ORDER BY last_seen DESC so the most
+// recently active devices appear first. Without this clause the result
+// order is undefined (Postgres-specific) and the UI's "newest first"
+// rendering is broken.
+func TestQueryDevices_SQLOrdersByLastSeenDesc(t *testing.T) {
+	if !strings.Contains(qDevices, "ORDER BY last_seen DESC") {
+		t.Errorf("devices SQL must contain ORDER BY last_seen DESC\nGot:\n%s", qDevices)
+	}
+}
+
+// SQL contract: the data query must include LIMIT $N OFFSET $M for
+// pagination. Without these clauses the entire devices table would be
+// scanned and returned on every request, which is wasteful and can
+// leak the whole device list to any client that hits the endpoint.
+func TestQueryDevices_SQLHasLimitOffset(t *testing.T) {
+	if !strings.Contains(qDevices, "LIMIT $") {
+		t.Errorf("devices SQL must contain LIMIT $\nGot:\n%s", qDevices)
+	}
+	if !strings.Contains(qDevices, "OFFSET $") {
+		t.Errorf("devices SQL must contain OFFSET $\nGot:\n%s", qDevices)
+	}
+}
+
+// SQL contract: the data query must select from the devices table. This
+// pins the table name so a future refactor that renames the table or
+// accidentally points at the wrong relation fails the test.
+func TestQueryDevices_SQLTargetsDevicesTable(t *testing.T) {
+	if !strings.Contains(qDevices, "FROM devices") {
+		t.Errorf("devices SQL must contain FROM devices\nGot:\n%s", qDevices)
+	}
+	if !strings.Contains(qDevicesCount, "FROM devices") {
+		t.Errorf("devices count SQL must contain FROM devices\nGot:\n%s", qDevicesCount)
 	}
 }

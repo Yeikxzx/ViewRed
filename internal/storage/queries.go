@@ -23,6 +23,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"time"
 
@@ -392,3 +393,158 @@ func (s *Storage) QueryPackets(ctx context.Context, filter PacketFilter) ([]capt
 
 	return events, total, nil
 }
+
+// QueryDevices — design constraints (see plan §Task 9 and
+// docs/superpowers/specs/2026-06-18-core-api-and-ui-shell.md §2 Query 5):
+//
+//   - Returns a paginated slice of discovered devices ordered by
+//     `last_seen DESC` so the most recently active devices appear first
+//     in the UI list. Without an explicit ORDER BY, Postgres is free to
+//     return rows in any order and the device list's stable scrollback
+//     is broken.
+//   - Nullable columns (mac, vendor, hostname, risk_score) are scanned
+//     via sql.Null* wrappers and translated to zero-value Go strings or
+//     a nil *float64 so the JSON contract matches the design doc §3
+//     (Device.RiskScore is *float64 because not every device has been
+//     scored yet).
+//   - totalCount is a separate SELECT COUNT(*) (no LIMIT/OFFSET applied)
+//     so the UI can render "page N of M" controls even when
+//     LIMIT/OFFSET shrinks the visible slice. The windowed form
+//     (COUNT() OVER ()) is tempting but forces the planner to
+//     materialise the full filtered set before applying LIMIT.
+//   - LIMIT $N OFFSET $M for pagination. Limit is clamped in code to
+//     [1, 500] before reaching SQL so a buggy handler cannot ask for
+//     an unbounded result set against the devices table.
+//
+// Defaults: limit <= 0 → 50. This is the spec-mandated pagination
+// default and matches QueryPackets's default so the two list endpoints
+// behave consistently for the UI.
+const defaultDevicesLimit = 50
+const maxDevicesLimit = 500
+
+// qDevices selects the paginated device rows for the UI list. Argument
+// order: $1 limit, $2 offset. The COALESCE wrapping the nullable
+// text columns converts SQL NULL into empty strings so the scanner can
+// land them directly into Go string fields; the risk_score COALESCE
+// means the column is never NULL on the wire even when the underlying
+// value is null, but we still scan it via sql.NullFloat64 in code so
+// the design doc's *float64 contract (NULL → nil) survives a future
+// refactor that drops the COALESCE.
+const qDevices = `
+SELECT id, ip, mac, COALESCE(vendor, ''), COALESCE(hostname, ''),
+       first_seen, last_seen, risk_score
+FROM devices
+ORDER BY last_seen DESC
+LIMIT $1 OFFSET $2
+`
+
+// qDevicesCount returns the total number of device rows in the table,
+// ignoring LIMIT/OFFSET. The handler/UI use this to render "page N of
+// M" controls. The same WHERE-less form would still be correct if a
+// future task adds filter columns (vendor, hostname, etc.) — but
+// filters land as a separate parameter, not a new task, so the
+// function stays single-purpose for now.
+const qDevicesCount = `
+SELECT COUNT(*)
+FROM devices
+`
+
+// QueryDevices returns a paginated slice of discovered devices plus
+// the total count of rows in the table. The result is ordered by
+// `last_seen DESC` (most recently active first). An empty result
+// produces a non-nil empty slice and totalCount=0, per the spec.
+func (s *Storage) QueryDevices(ctx context.Context, filter DeviceFilter) ([]Device, int, error) {
+	if s.db == nil {
+		return nil, 0, errStorageNotInitialized
+	}
+
+	// Clamp limit in code. The handler also defaults/clips, but doing
+	// it here means a future caller (e.g. a CLI tool, a future
+	// exports endpoint) cannot bypass the cap and accidentally ask
+	// the devices table for an unbounded result set.
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = defaultDevicesLimit
+	}
+	if limit > maxDevicesLimit {
+		limit = maxDevicesLimit
+	}
+
+	// data query — the paginated slice, ordered by last_seen DESC.
+	// The nullability of mac/vendor/hostname/risk_score is handled
+	// per-column in the Scan call below; the COALESCE in the SQL is
+	// belt-and-braces (vendor/hostname land as "" without it, but
+	// risk_score stays NULL and must be handled in code).
+	dataRows, err := s.db.QueryContext(ctx, qDevices, limit, filter.Offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer dataRows.Close()
+
+	// Pre-allocate a non-nil empty slice so JSON encodes "[]" when
+	// the devices table is empty. The device list UI renders an
+	// empty state without nil-deref checks.
+	devices := make([]Device, 0)
+	for dataRows.Next() {
+		var (
+			d         Device
+			mac       sql.NullString
+			vendor    sql.NullString
+			hostname  sql.NullString
+			riskScore sql.NullFloat64
+		)
+		if err := dataRows.Scan(
+			&d.ID,
+			&d.IP,
+			&mac,
+			&vendor,
+			&hostname,
+			&d.FirstSeen,
+			&d.LastSeen,
+			&riskScore,
+		); err != nil {
+			return nil, 0, err
+		}
+		// Translate NULL columns to zero-value Go strings / a nil
+		// *float64. The spec mandates *float64 for RiskScore so
+		// "device not yet scored" is distinguishable from "device
+		// scored 0.0" in the JSON response.
+		if mac.Valid {
+			d.MAC = mac.String
+		}
+		if vendor.Valid {
+			d.Vendor = vendor.String
+		}
+		if hostname.Valid {
+			d.Hostname = hostname.String
+		}
+		if riskScore.Valid {
+			v := riskScore.Float64
+			d.RiskScore = &v
+		}
+		devices = append(devices, d)
+	}
+	if err := dataRows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	// count query — the total number of rows in the devices table,
+	// ignoring LIMIT/OFFSET. Run after the data query so a mid-run
+	// DB error on the count doesn't leave the caller wondering
+	// whether the (possibly empty) data slice is "all there is" or
+	// "truncated by a failure".
+	var total int
+	if err := s.db.QueryRowContext(ctx, qDevicesCount).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	return devices, total, nil
+}
+
+// Compile-time check: *Storage satisfies the Querier interface. If a
+// future task adds a method to Querier without implementing it on
+// *Storage, the build fails here, not in a downstream handler test.
+// The same check is repeated inside querier.go for the test doubles
+// (MockQuerier, ErrorQuerier); keeping a copy here pins the production
+// type at the layer where the methods are defined.
+var _ Querier = (*Storage)(nil)
