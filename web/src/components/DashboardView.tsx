@@ -1,11 +1,6 @@
 import { useState, useEffect } from 'react';
 import {
   Activity,
-  ArrowUp,
-  ArrowDown,
-  Shield,
-  Zap,
-  HelpCircle,
   Database,
   Radio,
   ExternalLink,

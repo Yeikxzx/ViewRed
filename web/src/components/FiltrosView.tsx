@@ -3,8 +3,6 @@ import {
   Filter,
   Search,
   Check,
-  Code,
-  FileText,
   Copy,
   ChevronRight,
   HelpCircle,

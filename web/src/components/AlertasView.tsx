@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import {
   Bell,
-  Eye,
   Check,
   AlertOctagon,
   AlertTriangle,
@@ -155,7 +154,7 @@ export default function AlertasView({
         >
           <div className="flex justify-between items-center">
             <span className="text-xs font-mono text-[#9ba3b4] font-bold uppercase tracking-wider">
-              TOTAL ALK
+              TOTAL ALERTAS
             </span>
             <SlidersHorizontal className="h-4 w-4 text-[#9ba3b4]" />
           </div>

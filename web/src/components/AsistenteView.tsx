@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Sparkles, Send, Bot, User, Trash2, ArrowRight } from 'lucide-react';
-import { ChatMessage, NetworkAlert, Vulnerability } from '../types';
+import { ChatMessage, NetworkAlert } from '../types';
 import { llm } from '../lib/llm';
 
 interface AsistenteViewProps {
