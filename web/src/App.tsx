@@ -21,10 +21,12 @@ import {
 } from './data/mockData';
 
 export default function App() {
-  // currentView is kept only for Sidebar/Header active-state styling during
-  // the 6-step migration; the URL (via <Routes>) is now the source of truth
-  // for which view is rendered. Task 22 removes this state and switches the
-  // Sidebar to React Router <Link> components.
+  // currentView is kept only for Header active-state styling during the
+  // 6-step migration; the URL (via <Routes>) is now the source of truth
+  // for which view is rendered. Task 22 switched the Sidebar to React
+  // Router <NavLink> components, so the Sidebar no longer reads
+  // currentView/setView. Header and the view components still consume
+  // them; a future task will remove the state entirely.
   const [currentView, setView] = useState<ViewType>('dashboard');
   const [collapsed, setCollapsed] = useState(false);
   const [isCapturing, setIsCapturing] = useState(true);
@@ -111,8 +113,6 @@ export default function App() {
     <div id="viewred-app-root" className="flex h-screen bg-[#0a0e14] overflow-hidden select-none">
         {/* Sidebar Control left */}
         <Sidebar
-          currentView={currentView}
-          setView={setView}
           collapsed={collapsed}
           setCollapsed={setCollapsed}
           activeAlertCount={activeAlertCount}

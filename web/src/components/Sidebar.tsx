@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard,
   Radio,
@@ -13,19 +14,22 @@ import {
   Cpu,
   Tv,
 } from 'lucide-react';
-import { ViewType } from '../types';
 
 interface SidebarProps {
-  currentView: ViewType;
-  setView: (view: ViewType) => void;
   collapsed: boolean;
   setCollapsed: (collapsed: boolean) => void;
   activeAlertCount: number;
 }
 
+interface MenuItem {
+  id: string;
+  path: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  badge?: number;
+}
+
 export default function Sidebar({
-  currentView,
-  setView,
   collapsed,
   setCollapsed,
   activeAlertCount,
@@ -48,21 +52,34 @@ export default function Sidebar({
     return () => clearInterval(timer);
   }, []);
 
-  const menuItems = [
-    { id: 'dashboard' as ViewType, label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'captura' as ViewType, label: 'Captura', icon: Radio },
-    { id: 'filtros' as ViewType, label: 'Filtros', icon: Filter },
+  const menuItems: MenuItem[] = [
+    { id: 'dashboard', path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'captura', path: '/captura', label: 'Captura', icon: Radio },
+    { id: 'filtros', path: '/filtros', label: 'Filtros', icon: Filter },
     {
-      id: 'alertas' as ViewType,
+      id: 'alertas',
+      path: '/alertas',
       label: 'Alertas',
       icon: Bell,
       badge: activeAlertCount > 0 ? activeAlertCount : undefined,
     },
-    { id: 'topologia' as ViewType, label: 'Topología', icon: Network },
-    { id: 'vulnerabilidades' as ViewType, label: 'Vulnerabilidades', icon: ShieldAlert },
-    { id: 'asistente' as ViewType, label: 'Asistente', icon: Sparkles },
-    { id: 'configuracion' as ViewType, label: 'Configuración', icon: Settings },
+    { id: 'topologia', path: '/topologia', label: 'Topología', icon: Network },
+    { id: 'vulnerabilidades', path: '/vulnerabilidades', label: 'Vulnerabilidades', icon: ShieldAlert },
+    { id: 'asistente', path: '/asistente', label: 'Asistente', icon: Sparkles },
+    { id: 'configuracion', path: '/configuracion', label: 'Configuración', icon: Settings },
   ];
+
+  // Shared link className; `isActive` is supplied by react-router-dom's
+  // NavLink to drive the active-route styling without local state.
+  const navLinkClass = ({ isActive }: { isActive: boolean }): string =>
+    `w-full flex items-center gap-3 py-2 px-3 rounded-md transition-all duration-150 text-left relative ${
+      isActive
+        ? 'bg-[#1c2230] text-[#e4e7eb] font-medium border-l-2 border-[#3b82f6]'
+        : 'text-[#9ba3b4] hover:text-[#e4e7eb] hover:bg-[#131820]/75'
+    }`;
+
+  const iconClass = (isActive: boolean): string =>
+    `h-4.5 w-4.5 flex-shrink-0 ${isActive ? 'text-[#3b82f6]' : ''}`;
 
   return (
     <aside
@@ -108,31 +125,30 @@ export default function Sidebar({
         <nav id="sidebar-nav-links" className="mt-4 px-2 space-y-1">
           {menuItems.map((item) => {
             const Icon = item.icon;
-            const isActive = currentView === item.id;
             return (
-              <button
+              <NavLink
                 key={item.id}
                 id={`nav-${item.id}`}
-                onClick={() => setView(item.id)}
-                className={`w-full flex items-center gap-3 py-2 px-3 rounded-md transition-all duration-150 text-left relative ${
-                  isActive
-                    ? 'bg-[#1c2230] text-[#e4e7eb] font-medium border-l-2 border-[#3b82f6]'
-                    : 'text-[#9ba3b4] hover:text-[#e4e7eb] hover:bg-[#131820]/75'
-                }`}
+                to={item.path}
+                className={navLinkClass}
               >
-                <Icon className={`h-4.5 w-4.5 flex-shrink-0 ${isActive ? 'text-[#3b82f6]' : ''}`} />
-                {!collapsed && (
-                  <span className="font-sans text-xs tracking-wide">{item.label}</span>
+                {({ isActive }) => (
+                  <>
+                    <Icon className={iconClass(isActive)} />
+                    {!collapsed && (
+                      <span className="font-sans text-xs tracking-wide">{item.label}</span>
+                    )}
+                    {item.badge && !collapsed && (
+                      <span className="ml-auto bg-red-500 font-sans text-[10px] text-white font-bold h-4 px-1.5 rounded-full flex items-center justify-center shadow-lg shadow-red-500/30 animate-pulse">
+                        {item.badge}
+                      </span>
+                    )}
+                    {item.badge && collapsed && (
+                      <span className="absolute top-1 right-1 bg-red-500 w-2 h-2 rounded-full ring-2 ring-[#0a0e14] shadow" />
+                    )}
+                  </>
                 )}
-                {item.badge && !collapsed && (
-                  <span className="ml-auto bg-red-500 font-sans text-[10px] text-white font-bold h-4 px-1.5 rounded-full flex items-center justify-center shadow-lg shadow-red-500/30 animate-pulse">
-                    {item.badge}
-                  </span>
-                )}
-                {item.badge && collapsed && (
-                  <span className="absolute top-1 right-1 bg-red-500 w-2 h-2 rounded-full ring-2 ring-[#0a0e14] shadow" />
-                )}
-              </button>
+              </NavLink>
             );
           })}
         </nav>
