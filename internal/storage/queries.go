@@ -124,15 +124,15 @@ const maxTopTalkersLimit = 100
 // out of the CTE body would re-introduce a full-hypertable scan.
 const qTopTalkers = `
 WITH combined AS (
-    SELECT src_ip AS ip, length AS bytes
+    SELECT src_ip AS ip, length AS bytes, 1 AS pkts
     FROM packets
     WHERE time >= $1
     UNION ALL
-    SELECT dst_ip AS ip, length AS bytes
+    SELECT dst_ip AS ip, length AS bytes, 1 AS pkts
     FROM packets
     WHERE time >= $1
 )
-SELECT ip, SUM(bytes)::bigint AS bytes
+SELECT ip, SUM(bytes)::bigint AS bytes, SUM(pkts)::bigint AS packets
 FROM combined
 GROUP BY ip
 ORDER BY bytes DESC
@@ -170,7 +170,7 @@ func (s *Storage) QueryTopTalkers(ctx context.Context, since time.Time, limit in
 	talkers := make([]TopTalker, 0)
 	for rows.Next() {
 		var t TopTalker
-		if err := rows.Scan(&t.IP, &t.Bytes); err != nil {
+		if err := rows.Scan(&t.SrcIP, &t.Bytes, &t.Packets); err != nil {
 			return nil, err
 		}
 		talkers = append(talkers, t)
@@ -205,7 +205,7 @@ func (s *Storage) QueryTopTalkers(ctx context.Context, since time.Time, limit in
 //     on every poll.
 const qProtocolDistribution = `
 SELECT protocol,
-       (SUM(length) * 100.0 / NULLIF(SUM(SUM(length)) OVER (), 0))::float8 AS percent
+       (SUM(length) * 100.0 / NULLIF(SUM(SUM(length)) OVER (), 0))::float8 AS percentage
 FROM packets
 WHERE time >= $1
 GROUP BY protocol
@@ -234,7 +234,7 @@ func (s *Storage) QueryProtocolDistribution(ctx context.Context, since time.Time
 	shares := make([]ProtocolShare, 0)
 	for rows.Next() {
 		var ps ProtocolShare
-		if err := rows.Scan(&ps.Protocol, &ps.Percent); err != nil {
+		if err := rows.Scan(&ps.Protocol, &ps.Percentage); err != nil {
 			return nil, err
 		}
 		shares = append(shares, ps)
@@ -540,6 +540,74 @@ func (s *Storage) QueryDevices(ctx context.Context, filter DeviceFilter) ([]Devi
 
 	return devices, total, nil
 }
+
+// QueryAlerts returns a paginated list of alerts.
+func (s *Storage) QueryAlerts(ctx context.Context, filter AlertFilter) ([]Alert, int, error) {
+	if filter.Limit <= 0 {
+		filter.Limit = 100
+	}
+	if filter.Offset < 0 {
+		filter.Offset = 0
+	}
+
+	countQuery := `SELECT COUNT(*) FROM alerts`
+	var count int
+	if err := s.db.QueryRowContext(ctx, countQuery).Scan(&count); err != nil {
+		return nil, 0, err
+	}
+
+	query := `
+		SELECT id, time, severity, source, score, title, description, context, acknowledged_at
+		FROM alerts
+		ORDER BY time DESC
+		LIMIT $1 OFFSET $2
+	`
+	rows, err := s.db.QueryContext(ctx, query, filter.Limit, filter.Offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var alerts []Alert
+	for rows.Next() {
+		var a Alert
+		if err := rows.Scan(
+			&a.ID, &a.Time, &a.Severity, &a.Source, &a.Score, &a.Title,
+			&a.Description, &a.Context, &a.AcknowledgedAt,
+		); err != nil {
+			return nil, 0, err
+		}
+		alerts = append(alerts, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	if alerts == nil {
+		alerts = []Alert{}
+	}
+
+	return alerts, count, nil
+}
+
+// AcknowledgeAlert marks an alert as acknowledged by setting acknowledged_at to NOW().
+func (s *Storage) AcknowledgeAlert(ctx context.Context, id int64) error {
+	query := `UPDATE alerts SET acknowledged_at = NOW() WHERE id = $1 AND acknowledged_at IS NULL`
+	res, err := s.db.ExecContext(ctx, query, id)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		// Just to emulate a "not found or already acked", but we can just return nil.
+		// A REST API might want a 404/409, so maybe return a custom error?
+		// For now we'll just return nil to keep it idempotent.
+	}
+	return nil
+}
+
 
 // Compile-time check: *Storage satisfies the Querier interface. If a
 // future task adds a method to Querier without implementing it on

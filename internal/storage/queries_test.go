@@ -207,10 +207,10 @@ func TestQueryTopTalkers_ReturnsTopN(t *testing.T) {
 	s, mock, cleanup := newMockStorage(t)
 	defer cleanup()
 
-	rows := sqlmock.NewRows([]string{"ip", "bytes"}).
-		AddRow("10.0.0.1", int64(1_000_000)).
-		AddRow("10.0.0.2", int64(500_000)).
-		AddRow("10.0.0.3", int64(250_000))
+	rows := sqlmock.NewRows([]string{"ip", "bytes", "packets"}).
+		AddRow("10.0.0.1", int64(1_000_000), int64(10)).
+		AddRow("10.0.0.2", int64(500_000), int64(20)).
+		AddRow("10.0.0.3", int64(250_000), int64(30))
 
 	mock.ExpectQuery(qTopTalkers).
 		WithArgs(sqlmock.AnyArg(), 10).
@@ -225,12 +225,16 @@ func TestQueryTopTalkers_ReturnsTopN(t *testing.T) {
 	}
 	wantIP := []string{"10.0.0.1", "10.0.0.2", "10.0.0.3"}
 	wantBytes := []int64{1_000_000, 500_000, 250_000}
+	wantPackets := []int64{10, 20, 30}
 	for i, w := range wantIP {
-		if got[i].IP != w {
-			t.Errorf("talker[%d].IP: got %q, want %q", i, got[i].IP, w)
+		if got[i].SrcIP != w {
+			t.Errorf("talker[%d].SrcIP: got %q, want %q", i, got[i].SrcIP, w)
 		}
 		if got[i].Bytes != wantBytes[i] {
 			t.Errorf("talker[%d].Bytes: got %d, want %d", i, got[i].Bytes, wantBytes[i])
+		}
+		if got[i].Packets != wantPackets[i] {
+			t.Errorf("talker[%d].Packets: got %d, want %d", i, got[i].Packets, wantPackets[i])
 		}
 	}
 
@@ -247,7 +251,7 @@ func TestQueryTopTalkers_EmptyResultReturnsEmptySlice(t *testing.T) {
 	s, mock, cleanup := newMockStorage(t)
 	defer cleanup()
 
-	rows := sqlmock.NewRows([]string{"ip", "bytes"}) // no AddRow
+	rows := sqlmock.NewRows([]string{"ip", "bytes", "packets"}) // no AddRow
 
 	mock.ExpectQuery(qTopTalkers).
 		WithArgs(sqlmock.AnyArg(), 10).
@@ -309,7 +313,7 @@ func TestQueryTopTalkers_CapsLimitAt100(t *testing.T) {
 	s, mock, cleanup := newMockStorage(t)
 	defer cleanup()
 
-	rows := sqlmock.NewRows([]string{"ip", "bytes"})
+	rows := sqlmock.NewRows([]string{"ip", "bytes", "packets"})
 
 	mock.ExpectQuery(qTopTalkers).
 		WithArgs(sqlmock.AnyArg(), 100). // caller asked for 500, we send 100
@@ -331,7 +335,7 @@ func TestQueryTopTalkers_NonPositiveLimitDefaultsTo10(t *testing.T) {
 	s, mock, cleanup := newMockStorage(t)
 	defer cleanup()
 
-	rows := sqlmock.NewRows([]string{"ip", "bytes"})
+	rows := sqlmock.NewRows([]string{"ip", "bytes", "packets"})
 
 	mock.ExpectQuery(qTopTalkers).
 		WithArgs(sqlmock.AnyArg(), 10).
@@ -381,7 +385,7 @@ func TestQueryProtocolDistribution_ReturnsDistribution(t *testing.T) {
 	s, mock, cleanup := newMockStorage(t)
 	defer cleanup()
 
-	rows := sqlmock.NewRows([]string{"protocol", "percent"}).
+	rows := sqlmock.NewRows([]string{"protocol", "percentage"}).
 		AddRow("TCP", 65.5).
 		AddRow("UDP", 30.0).
 		AddRow("ICMP", 4.5)
@@ -405,8 +409,8 @@ func TestQueryProtocolDistribution_ReturnsDistribution(t *testing.T) {
 			t.Errorf("unexpected protocol in result: %q", ps.Protocol)
 			continue
 		}
-		if ps.Percent != w {
-			t.Errorf("protocol %q: got percent %v, want %v", ps.Protocol, ps.Percent, w)
+		if ps.Percentage != w {
+			t.Errorf("protocol %q: got percentage %v, want %v", ps.Protocol, ps.Percentage, w)
 		}
 	}
 
@@ -423,7 +427,7 @@ func TestQueryProtocolDistribution_EmptyResultReturnsEmptySlice(t *testing.T) {
 	s, mock, cleanup := newMockStorage(t)
 	defer cleanup()
 
-	rows := sqlmock.NewRows([]string{"protocol", "percent"}) // no AddRow
+	rows := sqlmock.NewRows([]string{"protocol", "percentage"}) // no AddRow
 
 	mock.ExpectQuery(qProtocolDistribution).
 		WithArgs(sqlmock.AnyArg()).

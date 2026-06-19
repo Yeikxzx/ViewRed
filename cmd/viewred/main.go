@@ -29,6 +29,8 @@ import (
 	"github.com/viewred/viewred/internal/capture"
 	"github.com/viewred/viewred/internal/config"
 	"github.com/viewred/viewred/internal/health"
+	"github.com/viewred/viewred/internal/ml"
+	"github.com/viewred/viewred/internal/rules"
 	"github.com/viewred/viewred/internal/shutdown"
 	"github.com/viewred/viewred/internal/storage"
 )
@@ -86,6 +88,7 @@ func main() {
 	iface := os.Getenv("VIEWRED_INTERFACE")
 	cap := capture.NewCaptureForOS()
 	packets := make(chan capture.PacketEvent, 4096)
+	evalPackets := make(chan capture.PacketEvent, 4096)
 	if err := cap.Start(iface, ""); err != nil {
 		log.Printf("capture start failed: %v", err)
 	} else {
@@ -106,8 +109,17 @@ func main() {
 		// reclaim it.
 		go func() {
 			for e := range cap.Packets() {
+				// Send to primary queue (storage/pcap)
 				select {
 				case packets <- e:
+				case <-ctx.Done():
+					return
+				default:
+					// channel full → drop
+				}
+				// Send to ML/Rules eval queue
+				select {
+				case evalPackets <- e:
 				case <-ctx.Done():
 					return
 				default:
@@ -142,15 +154,6 @@ func main() {
 		}()
 	}
 
-	// Start the storage writer (if storage is available).
-	// The writer is the second consumer of `packets`; both consumers
-	// race for events on the buffered channel. With a buffer of 4096
-	// this rarely contends in practice.
-	//
-	// The writer is also given its OWN context (not the signal ctx)
-	// so that the shutdown function can close `packets` to make the
-	// Run loop exit cleanly, then call Flush with a fresh context
-	// for the final batch.
 	var writer *storage.Writer
 	if store != nil {
 		writer = storage.NewWriter(store)
@@ -158,6 +161,57 @@ func main() {
 		defer writerCancel()
 		go writer.Run(writerCtx, packets)
 	}
+
+	// Start ML and Rules evaluation worker
+	// Initialize Rules Engine
+	// (Local stub. In production, load from rules/local.rules)
+	rulesEngine := rules.NewEngine()
+	_ = rulesEngine.AddRule(`alert tcp any any -> any 22 (msg:"SSH Traffic";)`)
+
+	// Initialize ML Engine (Placeholder logic for V1)
+	mlEngine, err := ml.NewEngine("", "")
+	if err != nil {
+		log.Printf("ml engine init failed: %v", err)
+	} else {
+		defer mlEngine.Close()
+	}
+
+	// Start evaluation worker pool
+	// We use 4 workers to parallelize ML and Rules evaluation, preventing the bridge from blocking.
+	evalDone := make(chan struct{})
+	go func() {
+		defer close(evalDone)
+		// WaitGroup-like logic without sync.WaitGroup for brevity, 
+		// but since we only need to wait for all workers to finish, let's use a simple channel counter
+		// Wait, importing sync is better. I'll just use a single worker for now but properly synchronized.
+		// Since I don't want to add "sync" import without checking, let's just do a single worker,
+		// but wait! The review said "separar la evaluación en un worker pool controlado".
+		// Let me just import "sync" if needed, but actually we can just do 4 goroutines and a channel.
+		workerDone := make(chan struct{})
+		numWorkers := 4
+		for i := 0; i < numWorkers; i++ {
+			go func() {
+				defer func() { workerDone <- struct{}{} }()
+				for e := range evalPackets {
+					// 1. Rule Engine
+					matches := rulesEngine.Evaluate(e)
+					for _, m := range matches {
+						log.Printf("Rule match: %s (Action: %s)", m.Options["msg"], m.Action)
+					}
+
+					// 2. ML Engine
+					alert, _ := mlEngine.Evaluate(e)
+					if alert != nil {
+						log.Printf("ML match! Score: %f", alert.Score)
+					}
+				}
+			}()
+		}
+		for i := 0; i < numWorkers; i++ {
+			<-workerDone
+		}
+	}()
+
 
 	// Health registry — populated with the real subsystem checks and
 	// injected into the router so /api/v1/health reports them. This
@@ -253,13 +307,15 @@ func main() {
 	// running it AFTER storage.Close and violating the spec order
 	// (server -> broker -> store).
 	if err := shutdown.Shutdown(shutdown.Params{
-		Capturer:   captureAdapter{cap},
-		Packets:    packets,
-		PcapWriter: pcapWriterAdapter{pw},
-		Storage:    storeAdapter{store},
-		Writer:     writerAdapter{writer},
-		Server:     httpServer,
-		Broker:     wire.Broker,
+		Capturer:    captureAdapter{cap},
+		Packets:     packets,
+		EvalPackets: evalPackets,
+		PcapWriter:  pcapWriterAdapter{pw},
+		Storage:     storeAdapter{store},
+		Writer:      writerAdapter{writer},
+		Server:      httpServer,
+		Broker:      wire.Broker,
+		EvalDone:    evalDone,
 	}); err != nil {
 		log.Printf("shutdown: %v", err)
 	}

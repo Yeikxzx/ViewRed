@@ -58,14 +58,18 @@ func TestPacketsList_ReturnsItemsAndTotal(t *testing.T) {
 			DstPort  uint16    `json:"dst_port"`
 			Protocol string    `json:"protocol"`
 			Length   int       `json:"length"`
-		} `json:"items"`
-		Total int `json:"total"`
+		} `json:"packets"`
+		Total  int `json:"total"`
+		Limit  int `json:"limit"`
+		Offset int `json:"offset"`
 	}
 	err := json.Unmarshal(w.Body.Bytes(), &body)
 	require.NoError(t, err)
 
 	require.Len(t, body.Items, 1)
 	assert.Equal(t, 1, body.Total)
+	assert.Equal(t, 100, body.Limit)
+	assert.Equal(t, 0, body.Offset)
 	assert.Equal(t, "10.0.0.1", body.Items[0].SrcIP)
 	assert.Equal(t, "10.0.0.2", body.Items[0].DstIP)
 	assert.Equal(t, "TCP", body.Items[0].Protocol)
@@ -97,8 +101,10 @@ func TestPacketsList_EmptyResult(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 
 	var body struct {
-		Items []any `json:"items"`
-		Total int   `json:"total"`
+		Items  []any `json:"packets"`
+		Total  int   `json:"total"`
+		Limit  int   `json:"limit"`
+		Offset int   `json:"offset"`
 	}
 	err := json.Unmarshal(w.Body.Bytes(), &body)
 	require.NoError(t, err)

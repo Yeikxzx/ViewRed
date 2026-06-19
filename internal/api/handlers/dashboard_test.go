@@ -119,8 +119,8 @@ func TestTopTalkers_ReturnsList(t *testing.T) {
 	q := &storage.MockQuerier{
 		TopTalkersFn: func(ctx context.Context, since time.Time, limit int) ([]storage.TopTalker, error) {
 			return []storage.TopTalker{
-				{IP: "10.0.0.1", Bytes: 1_000_000},
-				{IP: "10.0.0.2", Bytes: 500_000},
+				{SrcIP: "10.0.0.1", Bytes: 1_000_000, Packets: 10},
+				{SrcIP: "10.0.0.2", Bytes: 500_000, Packets: 20},
 			}, nil
 		},
 	}
@@ -135,18 +135,21 @@ func TestTopTalkers_ReturnsList(t *testing.T) {
 
 	var body struct {
 		Talkers []struct {
-			IP    string `json:"ip"`
-			Bytes int64  `json:"bytes"`
-		} `json:"talkers"`
+			SrcIP   string `json:"src_ip"`
+			Bytes   int64  `json:"bytes"`
+			Packets int64  `json:"packets"`
+		} `json:"top_talkers"`
 		Since time.Time `json:"since"`
 	}
 	err := json.Unmarshal(w.Body.Bytes(), &body)
 	require.NoError(t, err)
 	require.Len(t, body.Talkers, 2)
-	assert.Equal(t, "10.0.0.1", body.Talkers[0].IP)
+	assert.Equal(t, "10.0.0.1", body.Talkers[0].SrcIP)
 	assert.Equal(t, int64(1_000_000), body.Talkers[0].Bytes)
-	assert.Equal(t, "10.0.0.2", body.Talkers[1].IP)
+	assert.Equal(t, int64(10), body.Talkers[0].Packets)
+	assert.Equal(t, "10.0.0.2", body.Talkers[1].SrcIP)
 	assert.Equal(t, int64(500_000), body.Talkers[1].Bytes)
+	assert.Equal(t, int64(20), body.Talkers[1].Packets)
 	assert.Contains(t, w.Body.String(), "since")
 }
 
@@ -189,9 +192,9 @@ func TestProtocolDistribution_ReturnsList(t *testing.T) {
 	q := &storage.MockQuerier{
 		ProtocolDistFn: func(ctx context.Context, since time.Time) ([]storage.ProtocolShare, error) {
 			return []storage.ProtocolShare{
-				{Protocol: "TCP", Percent: 60.5},
-				{Protocol: "UDP", Percent: 30.0},
-				{Protocol: "ICMP", Percent: 9.5},
+				{Protocol: "TCP", Percentage: 60.5},
+				{Protocol: "UDP", Percentage: 30.0},
+				{Protocol: "ICMP", Percentage: 9.5},
 			}, nil
 		},
 	}
@@ -206,8 +209,8 @@ func TestProtocolDistribution_ReturnsList(t *testing.T) {
 
 	var body struct {
 		Protocols []struct {
-			Protocol string  `json:"protocol"`
-			Percent  float64 `json:"percent"`
+			Protocol   string  `json:"protocol"`
+			Percentage float64 `json:"percentage"`
 		} `json:"protocols"`
 		Since time.Time `json:"since"`
 	}
@@ -215,9 +218,9 @@ func TestProtocolDistribution_ReturnsList(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, body.Protocols, 3)
 	assert.Equal(t, "TCP", body.Protocols[0].Protocol)
-	assert.Equal(t, 60.5, body.Protocols[0].Percent)
+	assert.Equal(t, 60.5, body.Protocols[0].Percentage)
 	assert.Equal(t, "UDP", body.Protocols[1].Protocol)
-	assert.Equal(t, 30.0, body.Protocols[1].Percent)
+	assert.Equal(t, 30.0, body.Protocols[1].Percentage)
 }
 
 func TestProtocolDistribution_Returns503OnError(t *testing.T) {

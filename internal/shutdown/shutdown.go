@@ -79,6 +79,11 @@ type Params struct {
 	// pcap-writer bridge goroutine and signals the storage writer's
 	// Run loop to exit. nil is safe.
 	Packets chan capture.PacketEvent
+	// EvalPackets is the channel from capture to the ML and rules eval worker.
+	// Shutdown closes it along with Packets.
+	EvalPackets chan capture.PacketEvent
+	// EvalDone is closed when the evaluation worker pool finishes.
+	EvalDone <-chan struct{}
 	// PcapWriter is the rotating pcap file writer. nil is safe.
 	PcapWriter PacketCloser
 	// Storage is the pgx pool wrapper. nil is safe.
@@ -135,8 +140,12 @@ func Shutdown(p Params) error {
 	//    (its select on the channel will see ok=false) and the pcap-writer
 	//    bridge's for-range loop exits naturally. This is the fix for the
 	//    goroutine leak in the pcap bridge (CRITICAL #3).
+	//    Also close EvalPackets if present to stop ML/Rules evaluation workers.
 	if p.Packets != nil {
 		close(p.Packets)
+	}
+	if p.EvalPackets != nil {
+		close(p.EvalPackets)
 	}
 
 	// 3. Wait for the storage writer's Run() to return. The writer's
@@ -145,6 +154,11 @@ func Shutdown(p Params) error {
 	//    persisted and the goroutine has fully exited.
 	if p.Writer != nil {
 		<-p.Writer.Done()
+	}
+
+	// 3.1 Wait for Eval workers to exit.
+	if p.EvalDone != nil {
+		<-p.EvalDone
 	}
 
 	// 4. Close the pcap writer. The pcap-bridge goroutine has already

@@ -26,31 +26,7 @@ import (
 // provider is wired in (Plan 8).
 const stubVersion = "0.1.0"
 
-// AlertsList handles GET /api/v1/alerts and returns an empty JSON
-// array. Returning `[]` (not `null`) is important: the React alerts
-// view calls `.map(...)` on the body, and a `null` payload would
-// throw on the first render.
-//
-// Route: GET /api/v1/alerts
-// Response: 200 with body `[]`.
-func AlertsList(c *gin.Context) {
-	c.JSON(http.StatusOK, []any{})
-}
 
-// AlertAck handles POST /api/v1/alerts/:id/ack. The stub records the
-// call (echoing the id back to the caller) but does not persist
-// anything yet. `acknowledged` is hard-coded to `false` so the UI can
-// show a "queued" state until real acknowledgement is implemented.
-//
-// Route: POST /api/v1/alerts/:id/ack
-// Response: 200 with body `{"acknowledged": false, "id": "<id>"}`.
-func AlertAck(c *gin.Context) {
-	id := c.Param("id")
-	c.JSON(http.StatusOK, gin.H{
-		"acknowledged": false,
-		"id":           id,
-	})
-}
 
 // TopologyGet handles GET /api/v1/topology and returns the canonical
 // empty graph shape: `{nodes: [], edges: []}`. The keys are present

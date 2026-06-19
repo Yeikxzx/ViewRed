@@ -11,46 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestAlertsList_ReturnsEmptyArray verifies the alerts list endpoint
-// returns a 200 response with `[]` as the body. This shape is what the
-// React alerts view consumes; if we ever emit `null` instead, the UI's
-// `.map(...)` will explode on the first render.
-func TestAlertsList_ReturnsEmptyArray(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.GET("/api/v1/alerts", AlertsList)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/alerts", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusOK, w.Code)
-	assert.JSONEq(t, `[]`, w.Body.String())
-}
-
-// TestAlertAck_ReturnsAcknowledgedFalseWithID verifies the ack endpoint
-// echoes the alert id from the URL and reports `acknowledged: false`.
-// Acknowledgement persistence is a future task; the stub simply
-// acknowledges the call and returns the id so the UI can render a
-// "queued" state.
-func TestAlertAck_ReturnsAcknowledgedFalseWithID(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.POST("/api/v1/alerts/:id/ack", AlertAck)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/alerts/alert-42/ack", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusOK, w.Code)
-
-	var body map[string]any
-	err := json.Unmarshal(w.Body.Bytes(), &body)
-	require.NoError(t, err)
-
-	assert.Equal(t, "alert-42", body["id"])
-	assert.Equal(t, false, body["acknowledged"])
-}
 
 // TestTopologyGet_ReturnsEmptyGraph verifies the topology endpoint
 // returns a 200 with the canonical `{nodes: [], edges: []}` shape.

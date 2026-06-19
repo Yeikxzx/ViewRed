@@ -115,14 +115,15 @@ func TopTalkers(q storage.Querier) gin.HandlerFunc {
 		out := make([]gin.H, 0, len(talkers))
 		for _, t := range talkers {
 			out = append(out, gin.H{
-				"ip":    t.IP,
-				"bytes": t.Bytes,
+				"src_ip":  t.SrcIP,
+				"bytes":   t.Bytes,
+				"packets": t.Packets,
 			})
 		}
 
 		c.JSON(http.StatusOK, gin.H{
-			"talkers": out,
-			"since":   since,
+			"top_talkers": out,
+			"since":       since,
 		})
 	}
 }
@@ -157,8 +158,8 @@ func ProtocolDistribution(q storage.Querier) gin.HandlerFunc {
 		out := make([]gin.H, 0, len(shares))
 		for _, s := range shares {
 			out = append(out, gin.H{
-				"protocol": s.Protocol,
-				"percent":  s.Percent,
+				"protocol":   s.Protocol,
+				"percentage": s.Percentage,
 			})
 		}
 

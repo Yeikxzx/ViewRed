@@ -97,8 +97,10 @@ func PacketsList(q storage.Querier) gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusOK, gin.H{
-			"items": items,
-			"total": total,
+			"packets": items,
+			"total":   total,
+			"limit":   filter.Limit,
+			"offset":  filter.Offset,
 		})
 	}
 }

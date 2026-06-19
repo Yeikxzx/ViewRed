@@ -1,0 +1,44 @@
+schema: spec-driven
+
+context: |
+  Project: viewred — NDR (Network Detection & Response) local-first para PyMEs (50–500 disp., 1–5 Gbps).
+  Stack: Go (gopacket + AF_PACKET en captura; Gin/Fiber en backend) · PostgreSQL+TimescaleDB · React 18+TS+Tailwind · SSE+REST · ONNX (IF+RF) · Ollama (Qwen 2.5 3B).
+  Deploy: bind 127.0.0.1, acceso admin exclusivo vía SSH tunnel. Cero nube.
+  MVP: 7 features (captura, dashboard SSE, filtros, alertas IA, topología 2D, asistente LLM, alertas UI).
+  Out of V1: topología 3D, vulnerability scan, control activo, RBAC, reportes, SIEM, multi-tenant, app móvil, auth interna.
+  Specs fuentes: que es viewred.md v0.2, design.md v0.1.
+  Idioma: español en specs/UI/comentarios, inglés en código/identificadores.
+  Host dev: Windows. Target deploy: Linux (AF_PACKET requiere kernel ≥4.18).
+  Preflight cacheado: A1 (interactive) / B1 (OpenSpec) / C1 (ask-always) / D1 (400 líneas).
+
+rules:
+  proposal:
+    - Incluir rollback plan para cambios riesgosos
+    - Marcar dependencias de OS (AF_PACKET, capabilities, permisos)
+    - Para cambios que toquen captura: exigir target Linux y documentar cómo se valida en Windows
+  specs:
+    - Usar Given/When/Then para escenarios
+    - Usar keywords RFC 2119 (MUST, SHALL, SHOULD, MAY)
+    - Idioma: español (términos técnicos universales en inglés: IP, TCP, DNS, etc.)
+    - Cada requirement debe ser verificable manualmente o por test
+  design:
+    - Diagramas de secuencia para flujos SSE y captura de paquetes
+    - Documentar decisiones de arquitectura con rationale y alternativas descartadas
+    - Identificar componentes que requieren Linux vs portables
+    - Documentar contratos de eventos SSE (nombre, payload, throttle)
+  tasks:
+    - Agrupar por fase, numeración jerárquica
+    - Mantener tasks completables en una sesión
+    - Cada task debe tener criterio de aceptación verificable
+  apply:
+    - Seguir patrones existentes cuando aparezcan
+    - No introducir dependencias sin justificación en proposal
+    tdd: false
+    test_command: ""
+  verify:
+    test_command: ""
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Advertir antes de mergear deltas destructivos
+    - Verificar que los deltas se aplican sobre la main spec antes de archivar

@@ -144,7 +144,7 @@ func TestMockQuerier_DelegatesToFunctionFields(t *testing.T) {
 	})
 
 	t.Run("QueryTopTalkers", func(t *testing.T) {
-		expected := []TopTalker{{IP: "10.0.0.1", Bytes: 1024}, {IP: "10.0.0.2", Bytes: 2048}}
+		expected := []TopTalker{{SrcIP: "10.0.0.1", Bytes: 1024, Packets: 10}, {SrcIP: "10.0.0.2", Bytes: 2048, Packets: 20}}
 		q := &MockQuerier{
 			TopTalkersFn: func(ctx context.Context, since time.Time, limit int) ([]TopTalker, error) {
 				return expected, nil
@@ -160,7 +160,7 @@ func TestMockQuerier_DelegatesToFunctionFields(t *testing.T) {
 	})
 
 	t.Run("QueryProtocolDistribution", func(t *testing.T) {
-		expected := []ProtocolShare{{Protocol: "TCP", Percent: 70.0}, {Protocol: "UDP", Percent: 30.0}}
+		expected := []ProtocolShare{{Protocol: "TCP", Percentage: 70.0}, {Protocol: "UDP", Percentage: 30.0}}
 		q := &MockQuerier{
 			ProtocolDistFn: func(ctx context.Context, since time.Time) ([]ProtocolShare, error) {
 				return expected, nil

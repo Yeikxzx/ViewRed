@@ -62,14 +62,18 @@ func TestDevicesList_ReturnsItemsAndTotal(t *testing.T) {
 			FirstSeen time.Time `json:"first_seen"`
 			LastSeen  time.Time `json:"last_seen"`
 			RiskScore *float64  `json:"risk_score"`
-		} `json:"items"`
-		Total int `json:"total"`
+		} `json:"devices"`
+		Total  int `json:"total"`
+		Limit  int `json:"limit"`
+		Offset int `json:"offset"`
 	}
 	err := json.Unmarshal(w.Body.Bytes(), &body)
 	require.NoError(t, err)
 
 	require.Len(t, body.Items, 1)
 	assert.Equal(t, 1, body.Total)
+	assert.Equal(t, 100, body.Limit)
+	assert.Equal(t, 0, body.Offset)
 	assert.Equal(t, int64(42), body.Items[0].ID)
 	assert.Equal(t, "10.0.0.5", body.Items[0].IP)
 	assert.Equal(t, "aa:bb:cc:dd:ee:ff", body.Items[0].MAC)
@@ -113,7 +117,7 @@ func TestDevicesList_NilRiskScoreSurvivesJSON(t *testing.T) {
 	err := json.Unmarshal(w.Body.Bytes(), &body)
 	require.NoError(t, err)
 
-	items, ok := body["items"].([]any)
+	items, ok := body["devices"].([]any)
 	require.True(t, ok)
 	require.Len(t, items, 1)
 
@@ -145,8 +149,10 @@ func TestDevicesList_EmptyResult(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 
 	var body struct {
-		Items []any `json:"items"`
-		Total int   `json:"total"`
+		Items  []any `json:"devices"`
+		Total  int   `json:"total"`
+		Limit  int   `json:"limit"`
+		Offset int   `json:"offset"`
 	}
 	err := json.Unmarshal(w.Body.Bytes(), &body)
 	require.NoError(t, err)

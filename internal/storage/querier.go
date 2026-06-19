@@ -41,8 +41,9 @@ type DashboardSummary struct {
 // JSON tags use snake_case to keep the wire format consistent with
 // the rest of the dashboard shape.
 type TopTalker struct {
-	IP    string `json:"ip"`
-	Bytes int64  `json:"bytes"`
+	SrcIP   string `json:"src_ip"`
+	Bytes   int64  `json:"bytes"`
+	Packets int64  `json:"packets"`
 }
 
 // ProtocolShare represents one protocol's percentage of the total
@@ -51,8 +52,8 @@ type TopTalker struct {
 //
 // JSON tags use snake_case to keep the wire format consistent.
 type ProtocolShare struct {
-	Protocol string  `json:"protocol"`
-	Percent  float64 `json:"percent"`
+	Protocol   string  `json:"protocol"`
+	Percentage float64 `json:"percentage"`
 }
 
 // PacketFilter contains the parameters for the packet list endpoint.
@@ -93,6 +94,25 @@ type Device struct {
 	RiskScore *float64  `json:"risk_score"`
 }
 
+// AlertFilter contains the parameters for the alert list endpoint.
+type AlertFilter struct {
+	Limit  int
+	Offset int
+}
+
+// Alert represents an anomaly or rule match.
+type Alert struct {
+	ID             int64      `json:"id"`
+	Time           time.Time  `json:"time"`
+	Severity       string     `json:"severity"`
+	Source         string     `json:"source"`
+	Score          float32    `json:"score"`
+	Title          string     `json:"title"`
+	Description    *string    `json:"description"`
+	Context        []byte     `json:"context"` // raw JSON string/bytes
+	AcknowledgedAt *time.Time `json:"acknowledged_at"`
+}
+
 // Querier is the read interface for storage. Implementations must be
 // safe for concurrent use by multiple HTTP handlers.
 type Querier interface {
@@ -101,6 +121,8 @@ type Querier interface {
 	QueryProtocolDistribution(ctx context.Context, since time.Time) ([]ProtocolShare, error)
 	QueryPackets(ctx context.Context, filter PacketFilter) ([]capture.PacketEvent, int, error)
 	QueryDevices(ctx context.Context, filter DeviceFilter) ([]Device, int, error)
+	QueryAlerts(ctx context.Context, filter AlertFilter) ([]Alert, int, error)
+	AcknowledgeAlert(ctx context.Context, id int64) error
 }
 
 // MockQuerier is a hand-rolled test double. Each method delegates to a
@@ -116,6 +138,8 @@ type MockQuerier struct {
 	ProtocolDistFn     func(ctx context.Context, since time.Time) ([]ProtocolShare, error)
 	PacketsFn          func(ctx context.Context, filter PacketFilter) ([]capture.PacketEvent, int, error)
 	DevicesFn          func(ctx context.Context, filter DeviceFilter) ([]Device, int, error)
+	AlertsFn           func(ctx context.Context, filter AlertFilter) ([]Alert, int, error)
+	AcknowledgeAlertFn func(ctx context.Context, id int64) error
 }
 
 // Compile-time check that MockQuerier implements Querier. If the
@@ -156,6 +180,20 @@ func (m *MockQuerier) QueryDevices(ctx context.Context, filter DeviceFilter) ([]
 		return m.DevicesFn(ctx, filter)
 	}
 	return nil, 0, nil
+}
+
+func (m *MockQuerier) QueryAlerts(ctx context.Context, filter AlertFilter) ([]Alert, int, error) {
+	if m.AlertsFn != nil {
+		return m.AlertsFn(ctx, filter)
+	}
+	return nil, 0, nil
+}
+
+func (m *MockQuerier) AcknowledgeAlert(ctx context.Context, id int64) error {
+	if m.AcknowledgeAlertFn != nil {
+		return m.AcknowledgeAlertFn(ctx, id)
+	}
+	return nil
 }
 
 // ErrorQuerier returns its Err from every method. main.go injects this
@@ -207,4 +245,12 @@ func (e *ErrorQuerier) QueryPackets(ctx context.Context, filter PacketFilter) ([
 
 func (e *ErrorQuerier) QueryDevices(ctx context.Context, filter DeviceFilter) ([]Device, int, error) {
 	return nil, 0, e.err()
+}
+
+func (e *ErrorQuerier) QueryAlerts(ctx context.Context, filter AlertFilter) ([]Alert, int, error) {
+	return nil, 0, e.err()
+}
+
+func (e *ErrorQuerier) AcknowledgeAlert(ctx context.Context, id int64) error {
+	return e.err()
 }

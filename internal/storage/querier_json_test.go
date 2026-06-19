@@ -57,8 +57,8 @@ func TestDashboardSummary_JSONKeysAreSnakeCase(t *testing.T) {
 // and by the SSE feed consumers in the React UI).
 func TestTopTalker_JSONKeysAreSnakeCase(t *testing.T) {
 	talkers := []TopTalker{
-		{IP: "10.0.0.1", Bytes: 1024},
-		{IP: "10.0.0.2", Bytes: 2048},
+		{SrcIP: "10.0.0.1", Bytes: 1024, Packets: 10},
+		{SrcIP: "10.0.0.2", Bytes: 2048, Packets: 20},
 	}
 
 	data, err := json.Marshal(talkers)
@@ -67,13 +67,16 @@ func TestTopTalker_JSONKeysAreSnakeCase(t *testing.T) {
 	}
 
 	body := string(data)
-	if !strings.Contains(body, `"ip":"10.0.0.1"`) {
-		t.Errorf(`expected "ip":"10.0.0.1" in JSON, got %s`, body)
+	if !strings.Contains(body, `"src_ip":"10.0.0.1"`) {
+		t.Errorf(`expected "src_ip":"10.0.0.1" in JSON, got %s`, body)
 	}
 	if !strings.Contains(body, `"bytes":1024`) {
 		t.Errorf(`expected "bytes":1024 in JSON, got %s`, body)
 	}
-	if strings.Contains(body, `"IP"`) || strings.Contains(body, `"Bytes"`) {
+	if !strings.Contains(body, `"packets":10`) {
+		t.Errorf(`expected "packets":10 in JSON, got %s`, body)
+	}
+	if strings.Contains(body, `"SrcIP"`) || strings.Contains(body, `"Bytes"`) || strings.Contains(body, `"Packets"`) {
 		t.Errorf(`default Go keys must not appear, got %s`, body)
 	}
 }
@@ -82,8 +85,8 @@ func TestTopTalker_JSONKeysAreSnakeCase(t *testing.T) {
 // ProtocolShare (used by /api/v1/dashboard/protocols).
 func TestProtocolShare_JSONKeysAreSnakeCase(t *testing.T) {
 	shares := []ProtocolShare{
-		{Protocol: "TCP", Percent: 60.5},
-		{Protocol: "UDP", Percent: 30.0},
+		{Protocol: "TCP", Percentage: 60.5},
+		{Protocol: "UDP", Percentage: 30.0},
 	}
 
 	data, err := json.Marshal(shares)
@@ -95,10 +98,10 @@ func TestProtocolShare_JSONKeysAreSnakeCase(t *testing.T) {
 	if !strings.Contains(body, `"protocol":"TCP"`) {
 		t.Errorf(`expected "protocol":"TCP" in JSON, got %s`, body)
 	}
-	if !strings.Contains(body, `"percent":60.5`) {
-		t.Errorf(`expected "percent":60.5 in JSON, got %s`, body)
+	if !strings.Contains(body, `"percentage":60.5`) {
+		t.Errorf(`expected "percentage":60.5 in JSON, got %s`, body)
 	}
-	if strings.Contains(body, `"Protocol"`) || strings.Contains(body, `"Percent"`) {
+	if strings.Contains(body, `"Protocol"`) || strings.Contains(body, `"Percentage"`) {
 		t.Errorf(`default Go keys must not appear, got %s`, body)
 	}
 }

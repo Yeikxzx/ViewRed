@@ -199,3 +199,17 @@ func (w *Writer) signalDone() {
 
 // Close is a no-op for now; reserved for future graceful shutdown signals.
 func (w *Writer) Close() {}
+
+// WriteAlert synchronously inserts a new alert into the database.
+func (w *Writer) WriteAlert(ctx context.Context, alert Alert) error {
+	if w.pool == nil {
+		return errStorageUnavailable
+	}
+
+	_, err := w.pool.Exec(ctx,
+		`INSERT INTO alerts (time, severity, source, score, title, description, context, acknowledged_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		alert.Time, alert.Severity, alert.Source, alert.Score, alert.Title, alert.Description, alert.Context, alert.AcknowledgedAt,
+	)
+	return err
+}
