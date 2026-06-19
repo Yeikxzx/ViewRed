@@ -113,6 +113,15 @@ type Alert struct {
 	AcknowledgedAt *time.Time `json:"acknowledged_at"`
 }
 
+// TopologyEdge represents a link between two devices for React Flow.
+type TopologyEdge struct {
+	ID          int64     `json:"id"`
+	SrcDeviceID int64     `json:"src_device_id"`
+	DstDeviceID int64     `json:"dst_device_id"`
+	BytesCount  uint64    `json:"bytes_count"`
+	LastSeen    time.Time `json:"last_seen"`
+}
+
 // Querier is the read interface for storage. Implementations must be
 // safe for concurrent use by multiple HTTP handlers.
 type Querier interface {
@@ -121,6 +130,7 @@ type Querier interface {
 	QueryProtocolDistribution(ctx context.Context, since time.Time) ([]ProtocolShare, error)
 	QueryPackets(ctx context.Context, filter PacketFilter) ([]capture.PacketEvent, int, error)
 	QueryDevices(ctx context.Context, filter DeviceFilter) ([]Device, int, error)
+	QueryTopology(ctx context.Context) ([]Device, []TopologyEdge, error)
 	QueryAlerts(ctx context.Context, filter AlertFilter) ([]Alert, int, error)
 	AcknowledgeAlert(ctx context.Context, id int64) error
 }
@@ -138,6 +148,7 @@ type MockQuerier struct {
 	ProtocolDistFn     func(ctx context.Context, since time.Time) ([]ProtocolShare, error)
 	PacketsFn          func(ctx context.Context, filter PacketFilter) ([]capture.PacketEvent, int, error)
 	DevicesFn          func(ctx context.Context, filter DeviceFilter) ([]Device, int, error)
+	TopologyFn         func(ctx context.Context) ([]Device, []TopologyEdge, error)
 	AlertsFn           func(ctx context.Context, filter AlertFilter) ([]Alert, int, error)
 	AcknowledgeAlertFn func(ctx context.Context, id int64) error
 }
@@ -180,6 +191,13 @@ func (m *MockQuerier) QueryDevices(ctx context.Context, filter DeviceFilter) ([]
 		return m.DevicesFn(ctx, filter)
 	}
 	return nil, 0, nil
+}
+
+func (m *MockQuerier) QueryTopology(ctx context.Context) ([]Device, []TopologyEdge, error) {
+	if m.TopologyFn != nil {
+		return m.TopologyFn(ctx)
+	}
+	return nil, nil, nil
 }
 
 func (m *MockQuerier) QueryAlerts(ctx context.Context, filter AlertFilter) ([]Alert, int, error) {
@@ -245,6 +263,10 @@ func (e *ErrorQuerier) QueryPackets(ctx context.Context, filter PacketFilter) ([
 
 func (e *ErrorQuerier) QueryDevices(ctx context.Context, filter DeviceFilter) ([]Device, int, error) {
 	return nil, 0, e.err()
+}
+
+func (e *ErrorQuerier) QueryTopology(ctx context.Context) ([]Device, []TopologyEdge, error) {
+	return nil, nil, e.err()
 }
 
 func (e *ErrorQuerier) QueryAlerts(ctx context.Context, filter AlertFilter) ([]Alert, int, error) {

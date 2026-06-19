@@ -28,6 +28,7 @@ import (
 
 	"github.com/viewred/viewred/internal/capture"
 	"github.com/viewred/viewred/internal/config"
+	"github.com/viewred/viewred/internal/discovery"
 	"github.com/viewred/viewred/internal/health"
 	"github.com/viewred/viewred/internal/ml"
 	"github.com/viewred/viewred/internal/rules"
@@ -155,11 +156,14 @@ func main() {
 	}
 
 	var writer *storage.Writer
+	var discEngine *discovery.Engine
 	if store != nil {
 		writer = storage.NewWriter(store)
 		writerCtx, writerCancel := context.WithCancel(context.Background())
 		defer writerCancel()
 		go writer.Run(writerCtx, packets)
+		
+		discEngine = discovery.NewEngine(writer)
 	}
 
 	// Start ML and Rules evaluation worker
@@ -193,6 +197,10 @@ func main() {
 			go func() {
 				defer func() { workerDone <- struct{}{} }()
 				for e := range evalPackets {
+					if discEngine != nil {
+						discEngine.Process(ctx, e)
+					}
+
 					// 1. Rule Engine
 					matches := rulesEngine.Evaluate(e)
 					for _, m := range matches {

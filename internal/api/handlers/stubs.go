@@ -28,20 +28,7 @@ const stubVersion = "0.1.0"
 
 
 
-// TopologyGet handles GET /api/v1/topology and returns the canonical
-// empty graph shape: `{nodes: [], edges: []}`. The keys are present
-// (not omitted) so the React topology view can rely on them and
-// render the "no devices yet" placeholder without special-casing
-// `undefined`.
-//
-// Route: GET /api/v1/topology
-// Response: 200 with body `{"nodes": [], "edges": []}`.
-func TopologyGet(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"nodes": []any{},
-		"edges": []any{},
-	})
-}
+
 
 // VulnerabilitiesList handles GET /api/v1/vulnerabilities and returns
 // an empty JSON array. Same UI-safety reason as AlertsList: a `null`

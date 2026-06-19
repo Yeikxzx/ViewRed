@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -42,6 +43,16 @@ type Writer struct {
 	// (Done may be called before Run).
 	doneMu sync.Mutex
 	doneCh chan struct{}
+
+	edgeMu    sync.Mutex
+	edgeBatch map[string]*TopologyEdgeUpdate // key: src_id:dst_id
+}
+
+type TopologyEdgeUpdate struct {
+	SrcDeviceID int64
+	DstDeviceID int64
+	BytesCount  uint64
+	LastSeen    time.Time
 }
 
 // NewWriter creates a Writer bound to a Storage pool.
@@ -57,6 +68,7 @@ func NewWriter(s *Storage) *Writer {
 		batchSize:  batchSize,
 		flushEvery: flushEvery,
 		stats:      &WriterStats{},
+		edgeBatch:  make(map[string]*TopologyEdgeUpdate),
 	}
 }
 
@@ -104,6 +116,9 @@ func (w *Writer) Run(ctx context.Context, events <-chan capture.PacketEvent) {
 			w.stats.BatchesSent++
 		}
 		batch = batch[:0]
+
+		// Also flush edges
+		w.flushEdges(flushCtx)
 	}
 
 	for {
@@ -212,4 +227,91 @@ func (w *Writer) WriteAlert(ctx context.Context, alert Alert) error {
 		alert.Time, alert.Severity, alert.Source, alert.Score, alert.Title, alert.Description, alert.Context, alert.AcknowledgedAt,
 	)
 	return err
+}
+
+// UpsertDevice synchronously inserts or updates a device and returns its ID.
+func (w *Writer) UpsertDevice(ctx context.Context, dev Device) (int64, error) {
+	if w.pool == nil {
+		return 0, errStorageUnavailable
+	}
+
+	var id int64
+	err := w.pool.QueryRow(ctx,
+		`INSERT INTO devices (ip, mac, vendor, hostname, first_seen, last_seen)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 ON CONFLICT (ip) DO UPDATE SET 
+		 	mac = COALESCE(EXCLUDED.mac, devices.mac),
+		 	vendor = COALESCE(EXCLUDED.vendor, devices.vendor),
+		 	hostname = COALESCE(EXCLUDED.hostname, devices.hostname),
+		 	last_seen = EXCLUDED.last_seen
+		 RETURNING id`,
+		dev.IP, dev.MAC, dev.Vendor, dev.Hostname, dev.LastSeen, dev.LastSeen,
+	).Scan(&id)
+	return id, err
+}
+
+// UpsertTopologyEdge accumulates connection bytes between two devices in memory.
+// It is flushed periodically by Run.
+func (w *Writer) UpsertTopologyEdge(srcDeviceID, dstDeviceID int64, bytes uint64, lastSeen time.Time) {
+	if w.pool == nil || srcDeviceID == 0 || dstDeviceID == 0 {
+		return
+	}
+	// Always store smaller ID first to make edges bidirectional? 
+	// Usually topology implies direction. Let's keep direction.
+	
+	w.edgeMu.Lock()
+	defer w.edgeMu.Unlock()
+
+	key := fmt.Sprintf("%d:%d", srcDeviceID, dstDeviceID)
+	if existing, ok := w.edgeBatch[key]; ok {
+		existing.BytesCount += bytes
+		existing.LastSeen = lastSeen
+	} else {
+		w.edgeBatch[key] = &TopologyEdgeUpdate{
+			SrcDeviceID: srcDeviceID,
+			DstDeviceID: dstDeviceID,
+			BytesCount:  bytes,
+			LastSeen:    lastSeen,
+		}
+	}
+}
+
+// flushEdges writes all accumulated edges to the database and clears the batch.
+func (w *Writer) flushEdges(ctx context.Context) {
+	w.edgeMu.Lock()
+	if len(w.edgeBatch) == 0 {
+		w.edgeMu.Unlock()
+		return
+	}
+	batch := make([]*TopologyEdgeUpdate, 0, len(w.edgeBatch))
+	for _, e := range w.edgeBatch {
+		batch = append(batch, e)
+	}
+	// Reallocate to clear quickly
+	w.edgeBatch = make(map[string]*TopologyEdgeUpdate)
+	w.edgeMu.Unlock()
+
+	srcIDs := make([]int64, len(batch))
+	dstIDs := make([]int64, len(batch))
+	bytesArr := make([]int64, len(batch)) // pgx uses int64 for bigints usually
+	lastSeens := make([]time.Time, len(batch))
+
+	for i, e := range batch {
+		srcIDs[i] = e.SrcDeviceID
+		dstIDs[i] = e.DstDeviceID
+		bytesArr[i] = int64(e.BytesCount)
+		lastSeens[i] = e.LastSeen
+	}
+
+	_, err := w.pool.Exec(ctx,
+		`INSERT INTO topology_edges (src_device_id, dst_device_id, bytes_count, last_seen)
+		 SELECT * FROM UNNEST($1::bigint[], $2::bigint[], $3::bigint[], $4::timestamptz[])
+		 ON CONFLICT (src_device_id, dst_device_id) DO UPDATE SET
+		 	bytes_count = topology_edges.bytes_count + EXCLUDED.bytes_count,
+		 	last_seen = GREATEST(topology_edges.last_seen, EXCLUDED.last_seen)`,
+		srcIDs, dstIDs, bytesArr, lastSeens,
+	)
+	if err != nil {
+		log.Printf("storage.Writer: flushEdges err: %v", err)
+	}
 }

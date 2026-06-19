@@ -94,7 +94,7 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 		v1.GET("/devices", handlers.DevicesList(deps.Querier))
 		v1.GET("/alerts", handlers.AlertsList(deps.Querier))
 		v1.POST("/alerts/:id/ack", handlers.AlertAcknowledge(deps.Querier))
-		v1.GET("/topology", handlers.TopologyGet)
+		v1.GET("/topology", handlers.TopologyGet(deps.Querier))
 		v1.GET("/vulnerabilities", handlers.VulnerabilitiesList)
 		v1.GET("/config", handlers.ConfigGet)
 		v1.GET("/stream/metrics", handlers.StreamMetricsHandler(handlers.StreamMetricsHandlerDeps{

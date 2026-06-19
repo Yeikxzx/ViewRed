@@ -192,11 +192,14 @@ func TestPacketToEvent_OtherProtocol(t *testing.T) {
 	pkt.Metadata().Length = len(buf.Bytes())
 
 	ev := packetToEvent(pkt)
-	if ev.Protocol != "OTHER" {
-		t.Fatalf("Protocol: got %q, want OTHER", ev.Protocol)
+	if ev.Protocol != "ARP" {
+		t.Fatalf("Protocol: got %q, want ARP", ev.Protocol)
 	}
-	if ev.SrcIP != "" || ev.DstIP != "" {
-		t.Fatalf("IP fields should be empty, got SrcIP=%q DstIP=%q", ev.SrcIP, ev.DstIP)
+	if !ev.IsDiscovery {
+		t.Fatalf("IsDiscovery should be true for ARP")
+	}
+	if ev.SrcIP != "10.0.0.1" || ev.DstIP != "10.0.0.2" {
+		t.Fatalf("IP fields: got SrcIP=%q DstIP=%q", ev.SrcIP, ev.DstIP)
 	}
 }
 

@@ -22,6 +22,8 @@ type PacketEvent struct {
 	Protocol       string // "TCP", "UDP", "ICMP", "OTHER"
 	Length         int
 	PayloadPreview []byte // truncated to N bytes (configurable)
+	Hostname       string // populated by DHCP or mDNS
+	IsDiscovery    bool   // true if this packet contains discovery info (ARP/DHCP/mDNS)
 }
 
 // CaptureStats reports the current state of a PacketCapture implementation.

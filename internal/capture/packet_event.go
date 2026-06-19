@@ -1,6 +1,8 @@
 package capture
 
 import (
+	"net"
+
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 )
@@ -34,6 +36,12 @@ func packetToEvent(p gopacket.Packet) PacketEvent {
 		ip4L := ip4.(*layers.IPv4)
 		e.SrcIP = ip4L.SrcIP.String()
 		e.DstIP = ip4L.DstIP.String()
+	} else if arpLayer := p.Layer(layers.LayerTypeARP); arpLayer != nil {
+		arpL := arpLayer.(*layers.ARP)
+		e.SrcIP = net.IP(arpL.SourceProtAddress).String()
+		e.DstIP = net.IP(arpL.DstProtAddress).String()
+		e.IsDiscovery = true
+		e.Protocol = "ARP"
 	}
 	if tcp := p.Layer(layers.LayerTypeTCP); tcp != nil {
 		tcpL := tcp.(*layers.TCP)
@@ -52,6 +60,29 @@ func packetToEvent(p gopacket.Packet) PacketEvent {
 			e.Protocol = "ICMP"
 		} else {
 			e.Protocol = "OTHER"
+		}
+	}
+
+	// Extract Discovery Hostnames (DHCP / mDNS)
+	if dhcpLayer := p.Layer(layers.LayerTypeDHCPv4); dhcpLayer != nil {
+		dhcpL := dhcpLayer.(*layers.DHCPv4)
+		for _, opt := range dhcpL.Options {
+			if opt.Type == layers.DHCPOptHostname {
+				e.Hostname = string(opt.Data)
+				e.IsDiscovery = true
+				break
+			}
+		}
+	} else if dnsLayer := p.Layer(layers.LayerTypeDNS); dnsLayer != nil {
+		dnsL := dnsLayer.(*layers.DNS)
+		if e.DstPort == 5353 { // mDNS
+			for _, answer := range dnsL.Answers {
+				if answer.Type == layers.DNSTypePTR {
+					e.Hostname = string(answer.PTR)
+					e.IsDiscovery = true
+					break
+				}
+			}
 		}
 	}
 

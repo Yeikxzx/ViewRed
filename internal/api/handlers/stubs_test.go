@@ -12,31 +12,6 @@ import (
 )
 
 
-// TestTopologyGet_ReturnsEmptyGraph verifies the topology endpoint
-// returns a 200 with the canonical `{nodes: [], edges: []}` shape.
-// The React topology view will short-circuit on an empty graph and
-// show a "no devices yet" placeholder, so the keys MUST exist even
-// when the slices are empty.
-func TestTopologyGet_ReturnsEmptyGraph(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.GET("/api/v1/topology", TopologyGet)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/topology", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusOK, w.Code)
-
-	var body map[string]any
-	err := json.Unmarshal(w.Body.Bytes(), &body)
-	require.NoError(t, err)
-
-	assert.Contains(t, body, "nodes")
-	assert.Contains(t, body, "edges")
-	assert.JSONEq(t, `[]`, asJSON(t, body["nodes"]))
-	assert.JSONEq(t, `[]`, asJSON(t, body["edges"]))
-}
 
 // TestVulnerabilitiesList_ReturnsEmptyArray verifies the vulnerabilities
 // endpoint returns 200 with `[]`. Same UI-safety reason as
