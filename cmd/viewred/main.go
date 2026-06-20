@@ -222,7 +222,7 @@ func main() {
 	}
 
 	// Initialize ML Engine (Placeholder logic for V1)
-	mlEngine, err := ml.NewEngine("", "")
+	mlEngine, err := ml.NewEngine("", "models")
 	if err != nil {
 		log.Printf("ml engine init failed: %v", err)
 	} else {
