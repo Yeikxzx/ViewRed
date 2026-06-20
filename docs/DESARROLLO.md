@@ -491,5 +491,80 @@ f88e4fd feat(cmd): wire SSE broker and Querier into main.go lifecycle
 
 ---
 
+## 11. Cómo correr el proyecto en desarrollo
+
+### Requisitos
+
+Ver `docs/SETUP.md` para la instalación completa desde cero.
+
+### 1. Base de datos (opcional — el proyecto funciona sin DB)
+
+Con Docker:
+```powershell
+docker compose -f deploy/docker-compose.dev.yml up -d
+```
+
+Sin Docker: el binario arranca igual, los endpoints devuelven 503
+cuando la DB no está disponible.
+
+### 2. Backend (Go)
+
+```powershell
+# Desde la raíz del proyecto
+go run ./cmd/viewred
+# Escucha en http://127.0.0.1:8080
+```
+
+Variables de entorno:
+
+| Variable | Default | Descripción |
+|---|---|---|
+| `VIEWRED_CONFIG` | `%APPDATA%/viewred/config.yaml` | Ruta al archivo de config |
+| `VIEWRED_INTERFACE` | auto-detect | Interfaz de red para captura |
+| `VIEWRED_PCAP_DIR` | `%TEMP%/viewred-pcap` | Directorio para archivos pcap |
+
+### 3. Frontend (Vite dev server)
+
+```powershell
+# En otra terminal:
+cd web
+pnpm dev
+# Escucha en http://127.0.0.1:3000
+```
+
+El frontend en dev se conecta al backend en `localhost:8080` vía CORS.
+La config de CORS ya permite `localhost:5173` (Vite default) y
+`localhost:3000` (puerto custom del package.json).
+
+### 4. Tests
+
+```powershell
+# Todos los tests
+go test ./...
+cd web && pnpm test
+
+# Backend + frontend separados
+go test ./...
+cd web && pnpm vitest run
+
+# Type checking
+cd web && pnpm tsc --noEmit
+```
+
+### 5. Build de producción
+
+```powershell
+# Backend
+go build -o viewred.exe ./cmd/viewred
+
+# Frontend (genera web/dist/)
+cd web && pnpm build
+```
+
+El frontend buildeado se sirve automáticamente desde el binario Go
+(lo monta en `/` via `mountWebAssets`).
+
+---
+
 > Este documento se actualiza manualmente. Para regenerar el contexto
 > completo automáticamente, ejecutar el agente con `docs/context/00-README.md`.
