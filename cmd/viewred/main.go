@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -33,6 +34,7 @@ import (
 	"github.com/viewred/viewred/internal/ml"
 	"github.com/viewred/viewred/internal/rules"
 	"github.com/viewred/viewred/internal/shutdown"
+	"github.com/viewred/viewred/internal/sse"
 	"github.com/viewred/viewred/internal/storage"
 )
 
@@ -166,61 +168,6 @@ func main() {
 		discEngine = discovery.NewEngine(writer)
 	}
 
-	// Start ML and Rules evaluation worker
-	// Initialize Rules Engine
-	// (Local stub. In production, load from rules/local.rules)
-	rulesEngine := rules.NewEngine()
-	_ = rulesEngine.AddRule(`alert tcp any any -> any 22 (msg:"SSH Traffic";)`)
-
-	// Initialize ML Engine (Placeholder logic for V1)
-	mlEngine, err := ml.NewEngine("", "")
-	if err != nil {
-		log.Printf("ml engine init failed: %v", err)
-	} else {
-		defer mlEngine.Close()
-	}
-
-	// Start evaluation worker pool
-	// We use 4 workers to parallelize ML and Rules evaluation, preventing the bridge from blocking.
-	evalDone := make(chan struct{})
-	go func() {
-		defer close(evalDone)
-		// WaitGroup-like logic without sync.WaitGroup for brevity, 
-		// but since we only need to wait for all workers to finish, let's use a simple channel counter
-		// Wait, importing sync is better. I'll just use a single worker for now but properly synchronized.
-		// Since I don't want to add "sync" import without checking, let's just do a single worker,
-		// but wait! The review said "separar la evaluación en un worker pool controlado".
-		// Let me just import "sync" if needed, but actually we can just do 4 goroutines and a channel.
-		workerDone := make(chan struct{})
-		numWorkers := 4
-		for i := 0; i < numWorkers; i++ {
-			go func() {
-				defer func() { workerDone <- struct{}{} }()
-				for e := range evalPackets {
-					if discEngine != nil {
-						discEngine.Process(ctx, e)
-					}
-
-					// 1. Rule Engine
-					matches := rulesEngine.Evaluate(e)
-					for _, m := range matches {
-						log.Printf("Rule match: %s (Action: %s)", m.Options["msg"], m.Action)
-					}
-
-					// 2. ML Engine
-					alert, _ := mlEngine.Evaluate(e)
-					if alert != nil {
-						log.Printf("ML match! Score: %f", alert.Score)
-					}
-				}
-			}()
-		}
-		for i := 0; i < numWorkers; i++ {
-			<-workerDone
-		}
-	}()
-
-
 	// Health registry — populated with the real subsystem checks and
 	// injected into the router so /api/v1/health reports them. This
 	// is the fix for CRITICAL #1 (registry not wired to the API).
@@ -251,6 +198,103 @@ func main() {
 		querier = &storage.ErrorQuerier{Err: errors.New("storage unavailable")}
 	}
 	wire := newWireUp(&cfg, rg, querier)
+
+	// Start ML and Rules evaluation worker
+	// Initialize Rules Engine
+	rulesEngine := rules.NewEngine()
+	if store != nil {
+		customRules, err := store.GetCustomRules(ctx)
+		if err == nil && len(customRules) > 0 {
+			for _, r := range customRules {
+				if r.Enabled {
+					_ = rulesEngine.AddRule(r.RuleText)
+				}
+			}
+		} else {
+			// Fallback defaults if no custom rules exist
+			_ = rulesEngine.AddRule(`alert tcp any any -> any 22 (msg:"SSH Traffic Detected"; severity:INFO;)`)
+			_ = rulesEngine.AddRule(`alert tcp any any -> any 23 (msg:"Insecure Telnet Traffic"; severity:CRITICAL;)`)
+		}
+	} else {
+		// Fallback defaults when storage is unavailable
+		_ = rulesEngine.AddRule(`alert tcp any any -> any 22 (msg:"SSH Traffic Detected"; severity:INFO;)`)
+		_ = rulesEngine.AddRule(`alert tcp any any -> any 23 (msg:"Insecure Telnet Traffic"; severity:CRITICAL;)`)
+	}
+
+	// Initialize ML Engine (Placeholder logic for V1)
+	mlEngine, err := ml.NewEngine("", "")
+	if err != nil {
+		log.Printf("ml engine init failed: %v", err)
+	} else {
+		defer mlEngine.Close()
+	}
+
+	// Start evaluation worker pool
+	// We use 4 workers to parallelize ML and Rules evaluation, preventing the bridge from blocking.
+	evalDone := make(chan struct{})
+	go func() {
+		defer close(evalDone)
+		workerDone := make(chan struct{})
+		numWorkers := 4
+		for i := 0; i < numWorkers; i++ {
+			go func() {
+				defer func() { workerDone <- struct{}{} }()
+				for e := range evalPackets {
+					if discEngine != nil {
+						discEngine.Process(ctx, e)
+					}
+
+					// 1. Rule Engine
+					matches := rulesEngine.Evaluate(e)
+					for _, m := range matches {
+						// log.Printf("Rule match: %s (Action: %s)", m.Options["msg"], m.Action)
+						desc := fmt.Sprintf("Rule matched on %s %s:%d -> %s:%d", e.Protocol, e.SrcIP, e.SrcPort, e.DstIP, e.DstPort)
+						alert := storage.Alert{
+							Time:        e.Timestamp,
+							Severity:    m.Options["severity"],
+							Source:      e.SrcIP,
+							Score:       100.0,
+							Title:       m.Options["msg"],
+							Description: &desc,
+							Context:     []byte(fmt.Sprintf(`{"protocol":"%s", "action":"%s", "rule":"%s"}`, e.Protocol, m.Action, m.Options["msg"])),
+						}
+						if alert.Severity == "" {
+							alert.Severity = "WARNING"
+						}
+						if writer != nil {
+							_ = writer.WriteAlert(ctx, alert)
+							// Broadcast alert
+							if alertJSON, err := json.Marshal(alert); err == nil {
+								wire.Broker.Broadcast(sse.Event{
+									Name:  "alert",
+									Topic: "alerts",
+									Data:  alertJSON,
+								})
+							}
+						}
+					}
+
+					// 2. ML Engine
+					mlAlert, _ := mlEngine.Evaluate(e)
+					if mlAlert != nil {
+						if writer != nil {
+							_ = writer.WriteAlert(ctx, *mlAlert)
+							if alertJSON, err := json.Marshal(mlAlert); err == nil {
+								wire.Broker.Broadcast(sse.Event{
+									Name:  "alert",
+									Topic: "alerts",
+									Data:  alertJSON,
+								})
+							}
+						}
+					}
+				}
+			}()
+		}
+		for i := 0; i < numWorkers; i++ {
+			<-workerDone
+		}
+	}()
 
 	// Start the SSE broker and the 1Hz metrics ticker in
 	// goroutines. The returned stop function blocks until both
@@ -410,8 +454,7 @@ func findMigrationsDir() string {
 	}
 	for _, c := range candidates {
 		if info, err := os.Stat(c); err == nil && info.IsDir() {
-			abs, _ := filepath.Abs(c)
-			return abs
+			return filepath.ToSlash(c)
 		}
 	}
 	return "internal/storage/migrations" // best-effort fallback
