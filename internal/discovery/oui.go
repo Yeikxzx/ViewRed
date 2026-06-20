@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 var (
@@ -20,8 +21,9 @@ func LoadOUI(filePath string) error {
 	defer ouiMu.Unlock()
 
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		// Download it
-		resp, err := http.Get("https://standards-oui.ieee.org/oui/oui.txt")
+		// Download it with a 30s timeout
+		client := &http.Client{Timeout: 30 * time.Second}
+		resp, err := client.Get("https://standards-oui.ieee.org/oui/oui.txt")
 		if err != nil {
 			return fmt.Errorf("failed to download oui.txt: %w", err)
 		}
