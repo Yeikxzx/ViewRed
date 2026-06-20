@@ -144,6 +144,15 @@ func parsePacketsFilter(c *gin.Context) (storage.PacketFilter, error) {
 	f.Protocol = c.Query("protocol")
 	f.SrcIP = c.Query("src_ip")
 	f.DstIP = c.Query("dst_ip")
+	f.PayloadSearch = c.Query("payload_search")
+
+	// Port filter — passed as integer. A missing or invalid port
+	// falls back to 0 which acts as a wildcard in the SQL.
+	if raw := c.Query("port"); raw != "" {
+		if p, err := strconv.Atoi(raw); err == nil && p > 0 && p <= 65535 {
+			f.Port = p
+		}
+	}
 
 	// limit — must be a positive integer; values above the cap are
 	// clamped to packetsMaxLimit. The storage layer applies its own

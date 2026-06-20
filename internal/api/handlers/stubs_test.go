@@ -13,22 +13,6 @@ import (
 
 
 
-// TestVulnerabilitiesList_ReturnsEmptyArray verifies the vulnerabilities
-// endpoint returns 200 with `[]`. Same UI-safety reason as
-// TestAlertsList_ReturnsEmptyArray: a `null` body breaks `.map(...)`.
-func TestVulnerabilitiesList_ReturnsEmptyArray(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.GET("/api/v1/vulnerabilities", VulnerabilitiesList)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/vulnerabilities", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusOK, w.Code)
-	assert.JSONEq(t, `[]`, w.Body.String())
-}
-
 // TestConfigGet_ReturnsVersionAndEmptyFeatures verifies the config
 // endpoint returns the current viewred version and an empty features
 // map. The React settings view reads `version` for the "About"

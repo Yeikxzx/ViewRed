@@ -78,6 +78,11 @@ type RouterDeps struct {
 // /api/* takes precedence over static files.
 func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 	r := newBaseRouter()
+
+	// Mount web assets before global middlewares (like CORS) so static files
+	// don't get blocked by CORS origin checks when loaded via <script crossorigin>.
+	mountWebAssets(r)
+
 	r.Use(middleware.RequestID())
 	if len(deps.CORSConfig.AllowedOrigins) > 0 {
 		r.Use(middleware.NewCORS(deps.CORSConfig))
@@ -90,13 +95,20 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 		v1.GET("/dashboard/summary", handlers.DashboardSummary(deps.Querier))
 		v1.GET("/dashboard/top-talkers", handlers.TopTalkers(deps.Querier))
 		v1.GET("/dashboard/protocols", handlers.ProtocolDistribution(deps.Querier))
+		v1.GET("/rules", handlers.GetRules(deps.Querier))
+		v1.POST("/rules", handlers.CreateRule(deps.Querier))
+		v1.DELETE("/rules/:id", handlers.DeleteRule(deps.Querier))
 		v1.GET("/packets", handlers.PacketsList(deps.Querier))
 		v1.GET("/devices", handlers.DevicesList(deps.Querier))
 		v1.GET("/alerts", handlers.AlertsList(deps.Querier))
 		v1.POST("/alerts/:id/ack", handlers.AlertAcknowledge(deps.Querier))
 		v1.GET("/topology", handlers.TopologyGet(deps.Querier))
-		v1.GET("/vulnerabilities", handlers.VulnerabilitiesList)
+		v1.GET("/vulnerabilities", handlers.GetVulnerabilities(deps.Querier))
+		v1.POST("/vulnerabilities/:id/mitigate", handlers.MitigateVulnerability(deps.Querier))
+		v1.POST("/scan", handlers.TriggerScan(deps.Querier))
 		v1.GET("/config", handlers.ConfigGet)
+		v1.POST("/chat", handlers.LLMChatHandler(deps.Querier))
+		v1.GET("/chat/history/:conversation_id", handlers.GetChatHistoryHandler(deps.Querier))
 		v1.GET("/stream/metrics", handlers.StreamMetricsHandler(handlers.StreamMetricsHandlerDeps{
 			Broker: deps.Broker,
 		}))
@@ -114,7 +126,6 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 		}))
 	}
 
-	mountWebAssets(r)
 	return r
 }
 
@@ -139,6 +150,14 @@ func mountWebAssets(r *gin.Engine) {
 		r.StaticFS("/assets", http.Dir(filepath.Join(dist, "assets")))
 		r.StaticFile("/", filepath.Join(dist, "index.html"))
 		r.StaticFile("/index.html", filepath.Join(dist, "index.html"))
+		r.NoRoute(func(c *gin.Context) {
+			// Skip serving index.html for missing /api routes
+			if len(c.Request.URL.Path) >= 4 && c.Request.URL.Path[:4] == "/api" {
+				c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+				return
+			}
+			c.File(filepath.Join(dist, "index.html"))
+		})
 		return
 	}
 	r.NoRoute(func(c *gin.Context) {

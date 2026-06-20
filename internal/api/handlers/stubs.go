@@ -30,16 +30,6 @@ const stubVersion = "0.1.0"
 
 
 
-// VulnerabilitiesList handles GET /api/v1/vulnerabilities and returns
-// an empty JSON array. Same UI-safety reason as AlertsList: a `null`
-// body would break the React `.map(...)` call.
-//
-// Route: GET /api/v1/vulnerabilities
-// Response: 200 with body `[]`.
-func VulnerabilitiesList(c *gin.Context) {
-	c.JSON(http.StatusOK, []any{})
-}
-
 // ConfigGet handles GET /api/v1/config and returns the static build
 // metadata the React settings view renders: the viewred version
 // (used in the "About" footer) and an empty `features` map (the UI

@@ -160,5 +160,9 @@ func writeSSEFrame(w io.Writer, name string, data []byte) {
 	// surface the error: gin's Stream already detects client
 	// disconnect on the next iteration, and an error here
 	// would just abort the stream a few bytes earlier.
-	_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, data)
+	if name == "" || name == "message" {
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
+	} else {
+		_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, data)
+	}
 }
