@@ -102,9 +102,11 @@ viewred/
 │   │   └── store/
 │   │       ├── sse-store.ts                   # NEW: Zustand store
 │   │       └── sse-store.test.ts
-└── docs/superpowers/
-    ├── plans/2026-06-18-core-api-and-ui-shell.md   # this file
-    └── ... (other docs)
+└── docs/
+    ├── architecture/
+    ├── specs/
+    ├── plans/plan3-core-api-and-ui-shell.md   # this file
+    └── decisions/
 ```
 
 ---
@@ -1102,8 +1104,7 @@ Commit: `feat(web): add loading/error/empty states to DashboardView`
 ### Task 26: e2e verification
 
 **Files:**
-- Create: `docs/superpowers/plans/2026-06-18-core-api-and-ui-shell.md` — append "End-to-End Verification Results" section
-- Modify: `docs/superpowers/progress/` — update ledger
+- Create: `docs/plans/plan3-core-api-and-ui-shell.md` — append "End-to-End Verification Results" section
 
 Run:
 - `go test ./...` — 9/9 packages pass (added `internal/sse`, possibly `internal/api/middleware`)

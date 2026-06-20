@@ -3,7 +3,7 @@
 > **Date**: 2026-06-18
 > **Plan**: `core-api-and-ui-shell`
 > **Base commit**: `296f904` (Plan 2 merged)
-> **Context**: Proposal at `docs/superpowers/proposals/2026-06-18-core-api-and-ui-shell.md`. Full design at `docs/superpowers/specs/2026-06-17-viewred-v1-design.md`.
+> **Context**: Proposal at `docs/decisions/core-api-and-ui-shell-proposal.md`. Full design at `docs/specs/v1-design.md`.
 > **User decisions locked**: API scope (7 real + 5 stubs), React Router v7, Zustand, no shadcn/ui (custom), real errors when DB down, SSE only for `/stream/metrics`.
 
 ---

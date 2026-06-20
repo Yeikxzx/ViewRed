@@ -2,13 +2,13 @@
 
 Network Detection & Response (NDR) tool with local AI, for small teams managing 20-100 device networks.
 
-> Status: V1 in development. Plan 1 of 8 (bootstrap) is complete. See [the docs/superpowers/plans/ directory](./docs/superpowers/plans/) for upcoming work.
+> Status: V1 in development. Plan 1 of 8 (bootstrap) is complete. See [the docs/plans/ directory](./docs/plans/) for upcoming work.
 
 ## What is ViewRed?
 
 ViewRed listens to your network traffic passively, detects anomalies and threats with local ML models, runs vulnerability scans, and explains what's happening through a local LLM. Everything runs on your own machine. No data leaves the network.
 
-See [`que es viewred.md`](./que es viewred.md) for the full product spec and [`docs/superpowers/specs/`](./docs/superpowers/specs/) for the technical design.
+See [`que es viewred.md`](./que es viewred.md) for the full product spec and [`docs/specs/`](./docs/specs/) for the technical design.
 
 ## Quick start (dev)
 
@@ -59,7 +59,10 @@ GOOS=windows GOARCH=amd64 go build -o dist/viewred-windows-amd64.exe ./cmd/viewr
 cmd/viewred/         Go entry point
 internal/            Go packages (api, config, ...)
 web/                 React + Vite frontend
-docs/superpowers/    Specs and plans
+docs/architecture/  Architecture and design docs
+docs/specs/         Technical specifications
+docs/plans/         Implementation plans
+docs/decisions/     Proposals and explorations
 deploy/              Docker compose and deployment artifacts
 .github/workflows/   CI (GitHub Actions matrix Windows + Linux)
 ```
@@ -68,8 +71,8 @@ deploy/              Docker compose and deployment artifacts
 
 - [`que es viewred.md`](./que es viewred.md) — product definition
 - [`design.md`](./design.md) — UI/UX design spec
-- [`docs/superpowers/specs/`](./docs/superpowers/specs/) — technical specs
-- [`docs/superpowers/plans/`](./docs/superpowers/plans/) — implementation plans
+- [`docs/specs/`](./docs/specs/) — technical specs
+- [`docs/plans/`](./docs/plans/) — implementation plans
 
 ## License
 

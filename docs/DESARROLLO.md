@@ -194,7 +194,10 @@ viewred/
 ├── docs/
 │   ├── DESARROLLO.md     ← Este documento
 │   ├── context/          ← Dump de contexto completo (11 archivos)
-│   └── superpowers/      ← SDD artifacts: planes, specs, designs, briefs, reports
+│   ├── architecture/     ← Diseños y decisiones técnicas
+│   ├── specs/            ← Especificaciones técnicas
+│   ├── plans/            ← Planes de implementación
+│   └── decisions/        ← Propuestas y exploraciones
 └── openspec/             ← SDD artifact store
 ```
 

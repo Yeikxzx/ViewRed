@@ -3,8 +3,8 @@
 > **Date**: 2026-06-18
 > **Plan**: `core-api-and-ui-shell`
 > **Base commit**: `296f904` (Plan 2 merged)
-> **Spec**: `docs/superpowers/specs/2026-06-18-core-api-and-ui-shell.md`
-> **Proposal**: `docs/superpowers/proposals/2026-06-18-core-api-and-ui-shell.md`
+> **Spec**: `docs/specs/core-api-and-ui-shell.md`
+> **Proposal**: `docs/decisions/core-api-and-ui-shell-proposal.md`
 > **Target**: 500-800 lines, focused on **interfaces + data flow + TDD approach**, not implementation code.
 
 ---

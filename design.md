@@ -4,7 +4,7 @@
 > **Audiencia**: implementador de la UI (humano o IA) que va a crear la interfaz
 > **Stack de UI**: React 18 + TypeScript + Tailwind CSS
 > **Librerías sugeridas**: shadcn/ui (componentes), Lucide (íconos), Recharts (gráficos), React Flow (topología), react-virtual (tablas grandes), React Hook Form + Zod (formularios)
-> **Spec técnico**: `docs/superpowers/specs/2026-06-17-viewred-v1-design.md`
+> **Spec técnico**: `docs/specs/v1-design.md`
 > **Spec producto**: `que es viewred.md`
 
 ---

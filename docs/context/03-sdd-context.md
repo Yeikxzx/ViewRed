@@ -52,4 +52,4 @@ openspec/
 └── README.md
 ```
 
-Los SDD artifacts de Plan 3 están en `docs/superpowers/` (explorations, proposals, specs, designs, plans, briefs, reports, progress).
+Los SDD artifacts de Plan 3 están en `docs/architecture/`, `docs/specs/`, `docs/plans/` y `docs/decisions/`.

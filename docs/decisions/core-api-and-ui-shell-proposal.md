@@ -4,8 +4,8 @@
 > **Status**: Draft (proposal phase)
 > **Plan name**: `core-api-and-ui-shell`
 > **Base commit**: `296f904` (Plan 2 merged to main)
-> **Exploration report**: `docs/superpowers/explorations/2026-06-18-core-api-and-ui-shell.md`
-> **Design spec**: `docs/superpowers/specs/2026-06-17-viewred-v1-design.md`
+> **Exploration report**: `docs/decisions/core-api-and-ui-shell-exploration.md`
+> **Design spec**: `docs/specs/v1-design.md`
 
 ---
 
