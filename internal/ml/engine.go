@@ -20,6 +20,7 @@ type Engine struct {
 	initialized bool
 	isoSession  *ort.DynamicAdvancedSession
 	rfSession   *ort.DynamicAdvancedSession
+	windowStats *WindowStats
 }
 
 // NewEngine creates a new ML Engine.
@@ -69,6 +70,7 @@ func NewEngine(sharedLibraryPath, modelDir string) (*Engine, error) {
 		initialized: true,
 		isoSession:  isoSession,
 		rfSession:   rfSession,
+		windowStats: NewWindowStats(),
 	}, nil
 }
 
@@ -78,9 +80,13 @@ func (e *Engine) Evaluate(pkt capture.PacketEvent) (*storage.Alert, error) {
 		return nil, nil
 	}
 
-	features := ExtractFeatures(pkt)
+	// Record the packet in the sliding window first so the window stats
+	// reflect this packet's contribution to the source IP's behavior.
+	e.windowStats.Record(pkt.SrcIP, pkt.DstIP, pkt.DstPort, pkt.Length, pkt.Timestamp)
 
-	inputShape := ort.NewShape(1, 3)
+	features := ExtractFeatures(pkt, e.windowStats)
+
+	inputShape := ort.NewShape(1, numFeatures)
 	inputTensor, err := ort.NewTensor(inputShape, features)
 	if err != nil {
 		return nil, fmt.Errorf("ml: failed to create input tensor: %w", err)
@@ -175,8 +181,11 @@ func (e *Engine) Evaluate(pkt capture.PacketEvent) (*storage.Alert, error) {
 	return alert, nil
 }
 
-// Close cleans up ONNX runtime resources.
+// Close cleans up ONNX runtime resources and the window tracker.
 func (e *Engine) Close() {
+	if e.windowStats != nil {
+		e.windowStats.Close()
+	}
 	if e.isoSession != nil {
 		_ = e.isoSession.Destroy()
 	}
