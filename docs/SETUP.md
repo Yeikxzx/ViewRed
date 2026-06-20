@@ -155,7 +155,7 @@ Esto instala:
 
 ---
 
-## 4. Git + clonar repo
+## 4. Git + GitHub CLI + clonar repo
 
 ### Instalar Git
 
@@ -170,6 +170,23 @@ git config --global user.name "Tu Nombre"
 git config --global user.email "tu@email.com"
 git config --global core.autocrlf true     # Windows: CRLF → LF en commits
 ```
+
+### GitHub CLI
+
+```powershell
+# Para interactuar con GitHub (PRs, issues, etc.)
+winget install GitHub.cli
+
+# Autenticarse:
+gh auth login
+
+# Verificar:
+gh auth status
+```
+
+> **Nota**: El MCP de GitHub en opencode usa `@modelcontextprotocol/github-server`
+> que necesita `GITHUB_TOKEN`. Creá un token en GitHub Settings → Developer settings
+> → Personal access tokens y agregalo como variable de entorno del sistema.
 
 ### Clonar el repositorio
 
@@ -469,12 +486,13 @@ if ($process) { Stop-Process -Id $process.OwningProcess -Force }
 ## 10. Resumen: orden de instalación
 
 ```
- 1. Git                          winget install Git.Git
- 2. Go 1.26                      winget install GoLang.Go.1.26
+  1. Git + GitHub CLI             winget install Git.Git GitHub.cli
+                                     → gh auth login
+  2. Go 1.26                      winget install GoLang.Go.1.26
   3. Node.js 24 LTS               winget install OpenJS.NodeJS.LTS
                                      → npm install -g pnpm@9.12.0
- 4. MinGW-w64 (para CGO)         winget install MSYS2.MSYS2
-                                    → pacman -S mingw-w64-x86_64-gcc
+  4. MinGW-w64 (para CGO)         winget install MSYS2.MSYS2
+                                     → pacman -S mingw-w64-x86_64-gcc
   5. Clonar repo                  git clone <url>
   6. Docker Desktop               winget install Docker.DockerDesktop
                                      → reiniciar, docker compose up -d
@@ -483,7 +501,7 @@ if ($process) { Stop-Process -Id $process.OwningProcess -Force }
   8. Ollama + qwen2.5:3b          winget install Ollama.Ollama
                                      → ollama pull qwen2.5:3b
   9. Npcap (opcional)             Descargar de npcap.com
- 10. pnpm install                 cd web && pnpm install
+ 10. pnpm install                  cd web && pnpm install
 ```
 
 **Tiempo estimado total**: 45-90 minutos dependiendo de velocidad de internet.
