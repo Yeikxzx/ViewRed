@@ -1,79 +1,138 @@
 # ViewRed
 
-Network Detection & Response (NDR) tool with local AI, for small teams managing 20-100 device networks.
+[![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](https://go.dev)
+[![Node](https://img.shields.io/badge/Node-22+-339933?logo=node.js)](https://nodejs.org)
+[![License](https://img.shields.io/badge/License-MIT-blue)](#license)
 
-> Status: V1 in development. Plan 1 of 8 (bootstrap) is complete. See [the docs/plans/ directory](./docs/plans/) for upcoming work.
+**Network Detection & Response (NDR)** con IA local, para equipos chicos que gestionan redes de 20–100 dispositivos. Todo corre en tu máquina, sin enviar datos a la nube.
 
-## What is ViewRed?
+> **Estado**: V1 en desarrollo. Plan 3 (core API + UI shell) completado. Trabajando en Plan 4 (ML engine + alerts). Ver [`docs/plans/`](./docs/plans/).
 
-ViewRed listens to your network traffic passively, detects anomalies and threats with local ML models, runs vulnerability scans, and explains what's happening through a local LLM. Everything runs on your own machine. No data leaves the network.
+## Características principales
 
-See [`que es viewred.md`](./que es viewred.md) for the full product spec and [`docs/specs/`](./docs/specs/) for the technical design.
+- **Captura pasiva** de tráfico de red con gopacket (Npcap en Windows, AF_PACKET en Linux)
+- **Detección de anomalías** con Isolation Forest + Random Forest (ONNX Runtime, local)
+- **Dashboard en tiempo real** vía SSE con métricas, top talkers y gráficos
+- **Escaneo de vulnerabilidades** con nmap (rápido, completo, detección de servicios)
+- **Asistente IA** con Qwen 2.5 3B vía Ollama, responde en español
+- **Topología de red** 2D interactiva con React Flow
+- **Alertas y notificaciones** con severidad, score de confianza y acciones
+- **Cross-platform**: funciona idéntico en Windows y Linux
 
 ## Quick start (dev)
 
-Prerequisites: Go 1.25+, Node 22+, pnpm 9+, optionally Docker (for the dev DB), optionally `make` (Git Bash or WSL on Windows).
+### Prerrequisitos
+
+| Herramienta | Versión | Para qué |
+|---|---|---|
+| Go | 1.25+ | Backend |
+| Node.js | 22+ | Frontend |
+| pnpm | 9+ | Frontend |
+| Docker | Cualquiera | Base de datos (PostgreSQL + TimescaleDB) |
+| PostgreSQL 15+ | Con TimescaleDB | Almacenamiento |
+| make | Opcional | Comandos helper |
+
+### 1. Clonar e instalar
 
 ```bash
-# 1. Clone and set up
-git clone <repo-url> viewred
+git clone https://github.com/Yeikxzx/ViewRed.git viewred
 cd viewred
+```
 
-# 2. Install web dependencies
+### 2. Base de datos
+
+```bash
+# Opción A — Docker (recomendado para dev)
+docker compose -f deploy/docker-compose.dev.yml up -d
+
+# Opción B — PostgreSQL local con TimescaleDB
+#   Crear DB: createdb viewred
+#   Migraciones: go run ./cmd/viewred migrate
+```
+
+### 3. Instalar frontend
+
+```bash
 cd web && pnpm install && cd ..
+```
 
-# 3. Run tests
-#    Go tests:
-go test ./...
-#    Web tests:
-cd web && pnpm test
-#    (or use `make test` if you have make installed)
+### 4. Ejecutar tests
 
-# 4. Start dev (two terminals)
-# Terminal 1: Go backend on :8080
+```bash
+make test
+# o separado:
+#   go test ./...
+#   cd web && pnpm test
+```
+
+### 5. Iniciar (dos terminales)
+
+```bash
+# Terminal 1: Backend en :8080
 go run ./cmd/viewred
-# Terminal 2: Vite dev server on :3000
+
+# Terminal 2: Frontend en :3000
 cd web && pnpm dev
 ```
 
-Open http://127.0.0.1:3000 in your browser. The Go backend serves `/api/v1/health` directly at http://127.0.0.1:8080/api/v1/health.
+Abrir [http://127.0.0.1:3000](http://127.0.0.1:3000). El backend sirve health check en [http://127.0.0.1:8080/api/v1/health](http://127.0.0.1:8080/api/v1/health).
 
 ## Build
 
 ```bash
-# Build binary for current OS
+# Binario para el OS actual
 go build -o viewred.exe ./cmd/viewred
 
-# Or use make (if installed)
-make build         # binary for current OS
-make build-all     # cross-compile to dist/
+# Cross-compile (con make)
+make build-all
 
-# Or cross-compile directly
-GOOS=linux GOARCH=amd64 go build -o dist/viewred-linux-amd64      ./cmd/viewred
-GOOS=windows GOARCH=amd64 go build -o dist/viewred-windows-amd64.exe ./cmd/viewred
+# Manual
+GOOS=linux   GOARCH=amd64 go build -o dist/viewred-linux-amd64        ./cmd/viewred
+GOOS=windows GOARCH=amd64 go build -o dist/viewred-windows-amd64.exe  ./cmd/viewred
 ```
 
-## Project structure
+## Estructura del proyecto
 
 ```
-cmd/viewred/         Go entry point
-internal/            Go packages (api, config, ...)
-web/                 React + Vite frontend
-docs/architecture/  Architecture and design docs
-docs/specs/         Technical specifications
-docs/plans/         Implementation plans
-docs/decisions/     Proposals and explorations
-deploy/              Docker compose and deployment artifacts
-.github/workflows/   CI (GitHub Actions matrix Windows + Linux)
+cmd/viewred/          Entry point Go
+internal/             Paquetes internos (api, capture, ml, sse, ...)
+web/                  Frontend React + Vite + TypeScript
+docs/
+  ├── architecture/   Diseños y decisiones técnicas
+  ├── specs/          Especificaciones técnicas
+  ├── plans/          Planes de implementación
+  └── decisions/      Propuestas y exploraciones
+deploy/               Docker compose y despliegue
+models/               Modelos ONNX pre-entrenados
+scripts/              Scripts auxiliares (build, train, ...)
 ```
 
-## Documentation
+## Documentación
 
-- [`que es viewred.md`](./que es viewred.md) — product definition
-- [`design.md`](./design.md) — UI/UX design spec
-- [`docs/specs/`](./docs/specs/) — technical specs
-- [`docs/plans/`](./docs/plans/) — implementation plans
+| Documento | Contenido |
+|---|---|
+| [`que es viewred.md`](./que%20es%20viewred.md) | Definición del producto (público objetivo, features, roadmap) |
+| [`design.md`](./design.md) | Diseño de interfaz de usuario (UI/UX spec completo) |
+| [`docs/specs/`](./docs/specs/) | Especificaciones técnicas |
+| [`docs/architecture/`](./docs/architecture/) | Arquitectura y diseño del sistema |
+| [`docs/plans/`](./docs/plans/) | Planes de implementación por fase |
+| [`docs/SETUP.md`](./docs/SETUP.md) | Guía de instalación post-formateo |
+| [`docs/DESARROLLO.md`](./docs/DESARROLLO.md) | Documento de desarrollo (español) |
 
-## License
+## Stack
+
+| Capa | Tecnología |
+|---|---|
+| Backend | Go 1.25+ con Gin |
+| Frontend | React 18 + TypeScript + Tailwind + Vite |
+| DB | PostgreSQL 15+ + TimescaleDB |
+| Captura | gopacket (Npcap / AF_PACKET) |
+| ML | ONNX Runtime (Isolation Forest + Random Forest) |
+| LLM | Qwen 2.5 3B vía Ollama |
+| Scanner | nmap |
+| Tiempo real | SSE |
+| Tests | testify (Go) + Vitest + Testing Library (React) |
+
+## Licencia
 
 MIT.
