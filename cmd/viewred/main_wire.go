@@ -74,9 +74,9 @@ const (
 	metricsStreamTopic = "metrics"
 
 	// metricsStreamEventName is the SSE event name the ticker
-	// emits in the `event:` field. Matches what the React
-	// dashboard EventSource filters on.
-	metricsStreamEventName = "metrics"
+	// emits in the `event:` field. Uses "message" so that the default
+	// EventSource 'message' listener in the React UI catches it.
+	metricsStreamEventName = "message"
 
 	// defaultMetricsLookback is the time window the ticker
 	// queries. 1 hour matches the dashboard summary's default

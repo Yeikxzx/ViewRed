@@ -67,7 +67,7 @@ func defaults() Config {
 			ScanTimeoutSeconds: 600,
 		},
 		Database: DatabaseConfig{
-			URL: "postgres://viewred:viewred_dev_only@localhost:5432/viewred",
+			URL: "postgres://viewred:viewred_dev_only@localhost:5432/viewred?sslmode=disable",
 		},
 	}
 }

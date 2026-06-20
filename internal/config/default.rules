@@ -1,0 +1,17 @@
+# ViewRed V1 - Default Rules
+# Formato Suricata-style
+
+# Anomalías HTTP (texto plano) en puertos no estandar
+alert tcp any any -> any 8080 (msg:"HTTP on Non-Standard Port"; severity:INFO;)
+
+# Conexiones SSH
+alert tcp any any -> any 22 (msg:"SSH Traffic Detected"; severity:INFO;)
+
+# Telnet es inseguro
+alert tcp any any -> any 23 (msg:"Insecure Telnet Traffic"; severity:CRITICAL;)
+
+# FTP en texto plano
+alert tcp any any -> any 21 (msg:"Insecure FTP Traffic"; severity:WARNING;)
+
+# DNS Query (para pruebas locales)
+alert udp any any -> any 53 (msg:"DNS Query"; severity:INFO;)
