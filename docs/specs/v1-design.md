@@ -193,8 +193,7 @@ viewred/
 │   ├── package.json
 │   └── vite.config.ts
 ├── docs/
-│   ├── superpowers/
-│   │   └── specs/                   # design specs (este archivo)
+│   ├── specs/                       # design specs (este archivo)
 │   ├── testing.md                   # manual testing guide
 │   └── deployment.md
 ├── test/

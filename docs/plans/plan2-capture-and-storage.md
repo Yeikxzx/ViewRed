@@ -62,7 +62,7 @@ viewred/
 ├── go.mod                                # MODIFIED: add gopacket, pgx, golang-migrate, sqlmock
 ├── deploy/
 │   └── docker-compose.dev.yml            # unchanged (already has TimescaleDB)
-└── docs/superpowers/plans/2026-06-18-capture-and-storage.md   # this plan
+└── docs/plans/plan2-capture-and-storage.md   # this plan
 ```
 
 ---
@@ -3000,7 +3000,7 @@ git commit -m "chore: plan 2 final integration tweaks" --allow-empty
 
 ## Spec Coverage
 
-Cross-checking against `docs/superpowers/specs/2026-06-17-viewred-v1-design.md`:
+Cross-checking against `docs/specs/v1-design.md`:
 
 | Spec section | Covered by task |
 |---|---|

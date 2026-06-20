@@ -2,7 +2,7 @@
 
 > **Versión**: 0.3 (alineado con spec técnico 2026-06-17)
 > **Estado**: Documento de producto — base consolidada para implementación
-> **Spec técnico**: `docs/superpowers/specs/2026-06-17-viewred-v1-design.md`
+> **Spec técnico**: `docs/specs/v1-design.md`
 > **Spec UI/UX**: `design.md`
 
 ---

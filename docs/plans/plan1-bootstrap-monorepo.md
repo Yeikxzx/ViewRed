@@ -78,9 +78,8 @@ viewred/
 │   ├── .env.example
 │   └── .gitignore
 ├── docs/
-│   ├── superpowers/
-│   │   ├── specs/                         # already has design spec
-│   │   └── plans/                         # already has this plan
+│   ├── specs/                         # design specs
+│   └── plans/                         # implementation plans
 │   ├── testing.md                         # to be created
 │   └── deployment.md                      # to be created in plan 8
 ├── test/
@@ -1484,7 +1483,7 @@ Network Detection & Response (NDR) tool with local AI, for small teams managing 
 
 ViewRed listens to your network traffic passively, detects anomalies and threats with local ML models, runs vulnerability scans, and explains what's happening through a local LLM. Everything runs on your own machine. No data leaves the network.
 
-See [`que es viewred.md`](./que es viewred.md) for the full product spec and [`docs/superpowers/specs/`](./docs/superpowers/specs/) for the technical design.
+See [`que es viewred.md`](../../que%20es%20viewred.md) for the full product spec and [`docs/specs/`](../specs/) for the technical design.
 
 ## Quick start (dev)
 
@@ -1523,7 +1522,10 @@ make build-all     # cross-compile to dist/
 cmd/viewred/         Go entry point
 internal/            Go packages (api, config, ...)
 web/                 React + Vite frontend
-docs/superpowers/    Specs and plans
+docs/architecture/  Architecture and design docs
+docs/specs/         Technical specifications
+docs/plans/         Implementation plans
+docs/decisions/     Proposals and explorations
 deploy/              Docker compose and deployment artifacts
 .github/workflows/   CI
 ```
@@ -1532,8 +1534,8 @@ deploy/              Docker compose and deployment artifacts
 
 - [`que es viewred.md`](./que es viewred.md) — product definition
 - [`design.md`](./design.md) — UI/UX design spec
-- [`docs/superpowers/specs/`](./docs/superpowers/specs/) — technical specs
-- [`docs/superpowers/plans/`](./docs/superpowers/plans/) — implementation plans
+- [`docs/specs/`](../specs/) — technical specs
+- [`docs/plans/`](../plans/) — implementation plans
 
 ## License
 
@@ -1617,7 +1619,7 @@ git commit -m "chore: plan 1 final integration tweaks" --allow-empty
 
 ## Spec coverage
 
-Cross-checking against `docs/superpowers/specs/2026-06-17-viewred-v1-design.md`:
+Cross-checking against `docs/specs/v1-design.md`:
 
 | Spec section | Covered by task |
 |---|---|
