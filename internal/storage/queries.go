@@ -293,8 +293,10 @@ WHERE time >= $1 AND time <= $2
   AND ($3 = '' OR protocol = $3)
   AND ($4 = '' OR src_ip = $4)
   AND ($5 = '' OR dst_ip = $5)
+  AND ($6 = 0 OR src_port = $6 OR dst_port = $6)
+  AND ($7 = '' OR encode(payload_preview, 'escape') ILIKE '%' || $7 || '%')
 ORDER BY time DESC
-LIMIT $6 OFFSET $7
+LIMIT $8 OFFSET $9
 `
 
 // qPacketsCount mirrors the WHERE clause of qPackets but emits a
@@ -308,6 +310,8 @@ WHERE time >= $1 AND time <= $2
   AND ($3 = '' OR protocol = $3)
   AND ($4 = '' OR src_ip = $4)
   AND ($5 = '' OR dst_ip = $5)
+  AND ($6 = 0 OR src_port = $6 OR dst_port = $6)
+  AND ($7 = '' OR encode(payload_preview, 'escape') ILIKE '%' || $7 || '%')
 `
 
 // QueryPackets returns a paginated, filtered slice of packet events
@@ -341,6 +345,8 @@ func (s *Storage) QueryPackets(ctx context.Context, filter PacketFilter) ([]capt
 		filter.Protocol,
 		filter.SrcIP,
 		filter.DstIP,
+		filter.Port,
+		filter.PayloadSearch,
 		limit,
 		filter.Offset,
 	)
@@ -387,6 +393,8 @@ func (s *Storage) QueryPackets(ctx context.Context, filter PacketFilter) ([]capt
 		filter.Protocol,
 		filter.SrcIP,
 		filter.DstIP,
+		filter.Port,
+		filter.PayloadSearch,
 	).Scan(&total); err != nil {
 		return nil, 0, err
 	}

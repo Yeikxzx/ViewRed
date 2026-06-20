@@ -541,10 +541,10 @@ func TestQueryPackets_ReturnsEventsAndCount(t *testing.T) {
 		AddRow(now.Add(-1*time.Second), "10.0.0.3", "10.0.0.4", int32(80), int32(62000), "TCP", int(800), []byte("HTTP"))
 
 	mock.ExpectQuery(qPackets).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 50, 0).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 50, 0).
 		WillReturnRows(eventRows)
 	mock.ExpectQuery(qPacketsCount).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(42)))
 
 	filter := PacketFilter{
@@ -593,13 +593,13 @@ func TestQueryPackets_EmptyResultReturnsEmptySlice(t *testing.T) {
 	defer cleanup()
 
 	mock.ExpectQuery(qPackets).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 50, 0).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 50, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"time", "src_ip", "dst_ip", "src_port", "dst_port", "protocol", "length", "payload_preview",
 		})) // no AddRow
 
 	mock.ExpectQuery(qPacketsCount).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(0)))
 
 	got, total, err := s.QueryPackets(context.Background(), PacketFilter{})
@@ -629,7 +629,7 @@ func TestQueryPackets_PropagatesDBErrorOnSelect(t *testing.T) {
 
 	sentinel := errors.New("connection reset by peer")
 	mock.ExpectQuery(qPackets).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 50, 0).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 50, 0).
 		WillReturnError(sentinel)
 
 	_, _, err := s.QueryPackets(context.Background(), PacketFilter{})
@@ -670,10 +670,10 @@ func TestQueryPackets_CapsLimitAt500(t *testing.T) {
 		"time", "src_ip", "dst_ip", "src_port", "dst_port", "protocol", "length", "payload_preview",
 	})
 	mock.ExpectQuery(qPackets).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 500, 0). // caller asked for 5000, we send 500
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 500, 0). // caller asked for 5000, we send 500
 		WillReturnRows(eventRows)
 	mock.ExpectQuery(qPacketsCount).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(0)))
 
 	if _, _, err := s.QueryPackets(context.Background(), filter); err != nil {
@@ -695,10 +695,10 @@ func TestQueryPackets_NonPositiveLimitDefaultsTo50(t *testing.T) {
 		"time", "src_ip", "dst_ip", "src_port", "dst_port", "protocol", "length", "payload_preview",
 	})
 	mock.ExpectQuery(qPackets).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 50, 0).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 50, 0).
 		WillReturnRows(eventRows)
 	mock.ExpectQuery(qPacketsCount).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(0)))
 
 	if _, _, err := s.QueryPackets(context.Background(), PacketFilter{Limit: 0}); err != nil {
@@ -725,10 +725,10 @@ func TestQueryPackets_PassesAllFiltersToSQL(t *testing.T) {
 		"time", "src_ip", "dst_ip", "src_port", "dst_port", "protocol", "length", "payload_preview",
 	})
 	mock.ExpectQuery(qPackets).
-		WithArgs(since, until, "TCP", "10.0.0.5", "10.0.0.6", 50, 0).
+		WithArgs(since, until, "TCP", "10.0.0.5", "10.0.0.6", 0, "", 50, 0).
 		WillReturnRows(eventRows)
 	mock.ExpectQuery(qPacketsCount).
-		WithArgs(since, until, "TCP", "10.0.0.5", "10.0.0.6").
+		WithArgs(since, until, "TCP", "10.0.0.5", "10.0.0.6", 0, "").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(0)))
 
 	filter := PacketFilter{
@@ -757,10 +757,10 @@ func TestQueryPackets_OffsetPropagatesToSQL(t *testing.T) {
 		"time", "src_ip", "dst_ip", "src_port", "dst_port", "protocol", "length", "payload_preview",
 	})
 	mock.ExpectQuery(qPackets).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 25, 100).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 25, 100).
 		WillReturnRows(eventRows)
 	mock.ExpectQuery(qPacketsCount).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(125)))
 
 	if _, total, err := s.QueryPackets(context.Background(), PacketFilter{Limit: 25, Offset: 100}); err != nil {

@@ -61,13 +61,15 @@ type ProtocolShare struct {
 // empty Protocol/SrcIP/DstIP mean "any", and Limit/Offset of 0 mean
 // "use server default" (handler enforces a sane cap).
 type PacketFilter struct {
-	Since    time.Time
-	Until    time.Time
-	Protocol string
-	SrcIP    string
-	DstIP    string
-	Limit    int
-	Offset   int
+	Since         time.Time
+	Until         time.Time
+	Protocol      string
+	SrcIP         string
+	DstIP         string
+	Port          int
+	PayloadSearch string
+	Limit         int
+	Offset        int
 }
 
 // DeviceFilter contains the parameters for the device list endpoint.
@@ -122,6 +124,34 @@ type TopologyEdge struct {
 	LastSeen    time.Time `json:"last_seen"`
 }
 
+// LLMMessage represents a message in a conversation.
+type LLMMessage struct {
+	ID             int64     `json:"id"`
+	ConversationID string    `json:"conversation_id"` // UUID string
+	Role           string    `json:"role"`
+	Content        string    `json:"content"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// CustomRule represents a user-defined network detection rule.
+type CustomRule struct {
+	ID        int64     `json:"id"`
+	RuleText  string    `json:"rule_text"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type Vulnerability struct {
+	ID           int64     `json:"id"`
+	DeviceIP     string    `json:"device_ip"`
+	CVEID        *string   `json:"cve_id"`
+	CVSSScore    *float64  `json:"cvss_score"`
+	Description  string    `json:"description"`
+	Port         *int      `json:"port"`
+	Mitigated    bool      `json:"mitigated"`
+	DiscoveredAt time.Time `json:"discovered_at"`
+}
+
 // Querier is the read interface for storage. Implementations must be
 // safe for concurrent use by multiple HTTP handlers.
 type Querier interface {
@@ -133,6 +163,18 @@ type Querier interface {
 	QueryTopology(ctx context.Context) ([]Device, []TopologyEdge, error)
 	QueryAlerts(ctx context.Context, filter AlertFilter) ([]Alert, int, error)
 	AcknowledgeAlert(ctx context.Context, id int64) error
+
+	EnsureConversationExists(ctx context.Context, conversationID string) error
+	SaveLLMMessage(ctx context.Context, msg LLMMessage) error
+	GetConversationHistory(ctx context.Context, conversationID string) ([]LLMMessage, error)
+
+	GetCustomRules(ctx context.Context) ([]CustomRule, error)
+	SaveCustomRule(ctx context.Context, ruleText string, enabled bool) (int64, error)
+	DeleteCustomRule(ctx context.Context, id int64) error
+
+	GetVulnerabilities(ctx context.Context, includeMitigated bool) ([]Vulnerability, error)
+	SaveVulnerability(ctx context.Context, v Vulnerability) (int64, error)
+	MitigateVulnerability(ctx context.Context, id int64) error
 }
 
 // MockQuerier is a hand-rolled test double. Each method delegates to a
@@ -151,6 +193,18 @@ type MockQuerier struct {
 	TopologyFn         func(ctx context.Context) ([]Device, []TopologyEdge, error)
 	AlertsFn           func(ctx context.Context, filter AlertFilter) ([]Alert, int, error)
 	AcknowledgeAlertFn func(ctx context.Context, id int64) error
+
+	EnsureConversationExistsFn func(ctx context.Context, conversationID string) error
+	SaveLLMMessageFn           func(ctx context.Context, msg LLMMessage) error
+	GetConversationHistoryFn   func(ctx context.Context, conversationID string) ([]LLMMessage, error)
+
+	GetCustomRulesFn   func(ctx context.Context) ([]CustomRule, error)
+	SaveCustomRuleFn   func(ctx context.Context, ruleText string, enabled bool) (int64, error)
+	DeleteCustomRuleFn func(ctx context.Context, id int64) error
+
+	GetVulnerabilitiesFn    func(ctx context.Context, includeMitigated bool) ([]Vulnerability, error)
+	SaveVulnerabilityFn     func(ctx context.Context, v Vulnerability) (int64, error)
+	MitigateVulnerabilityFn func(ctx context.Context, id int64) error
 }
 
 // Compile-time check that MockQuerier implements Querier. If the
@@ -210,6 +264,69 @@ func (m *MockQuerier) QueryAlerts(ctx context.Context, filter AlertFilter) ([]Al
 func (m *MockQuerier) AcknowledgeAlert(ctx context.Context, id int64) error {
 	if m.AcknowledgeAlertFn != nil {
 		return m.AcknowledgeAlertFn(ctx, id)
+	}
+	return nil
+}
+
+func (m *MockQuerier) EnsureConversationExists(ctx context.Context, conversationID string) error {
+	if m.EnsureConversationExistsFn != nil {
+		return m.EnsureConversationExistsFn(ctx, conversationID)
+	}
+	return nil
+}
+
+func (m *MockQuerier) SaveLLMMessage(ctx context.Context, msg LLMMessage) error {
+	if m.SaveLLMMessageFn != nil {
+		return m.SaveLLMMessageFn(ctx, msg)
+	}
+	return nil
+}
+
+func (m *MockQuerier) GetConversationHistory(ctx context.Context, conversationID string) ([]LLMMessage, error) {
+	if m.GetConversationHistoryFn != nil {
+		return m.GetConversationHistoryFn(ctx, conversationID)
+	}
+	return nil, nil
+}
+
+func (m *MockQuerier) GetCustomRules(ctx context.Context) ([]CustomRule, error) {
+	if m.GetCustomRulesFn != nil {
+		return m.GetCustomRulesFn(ctx)
+	}
+	return nil, nil
+}
+
+func (m *MockQuerier) SaveCustomRule(ctx context.Context, ruleText string, enabled bool) (int64, error) {
+	if m.SaveCustomRuleFn != nil {
+		return m.SaveCustomRuleFn(ctx, ruleText, enabled)
+	}
+	return 0, nil
+}
+
+func (m *MockQuerier) DeleteCustomRule(ctx context.Context, id int64) error {
+	if m.DeleteCustomRuleFn != nil {
+		return m.DeleteCustomRuleFn(ctx, id)
+	}
+	return nil
+}
+
+func (m *MockQuerier) GetVulnerabilities(ctx context.Context, includeMitigated bool) ([]Vulnerability, error) {
+	if m.GetVulnerabilitiesFn != nil {
+		return m.GetVulnerabilitiesFn(ctx, includeMitigated)
+	}
+	return nil, nil
+}
+
+func (m *MockQuerier) SaveVulnerability(ctx context.Context, v Vulnerability) (int64, error) {
+	if m.SaveVulnerabilityFn != nil {
+		return m.SaveVulnerabilityFn(ctx, v)
+	}
+	return 0, nil
+}
+
+func (m *MockQuerier) MitigateVulnerability(ctx context.Context, id int64) error {
+	if m.MitigateVulnerabilityFn != nil {
+		return m.MitigateVulnerabilityFn(ctx, id)
 	}
 	return nil
 }
@@ -274,5 +391,41 @@ func (e *ErrorQuerier) QueryAlerts(ctx context.Context, filter AlertFilter) ([]A
 }
 
 func (e *ErrorQuerier) AcknowledgeAlert(ctx context.Context, id int64) error {
+	return e.err()
+}
+
+func (e *ErrorQuerier) EnsureConversationExists(ctx context.Context, conversationID string) error {
+	return e.err()
+}
+
+func (e *ErrorQuerier) SaveLLMMessage(ctx context.Context, msg LLMMessage) error {
+	return e.err()
+}
+
+func (e *ErrorQuerier) GetConversationHistory(ctx context.Context, conversationID string) ([]LLMMessage, error) {
+	return nil, e.err()
+}
+
+func (e *ErrorQuerier) GetCustomRules(ctx context.Context) ([]CustomRule, error) {
+	return nil, e.err()
+}
+
+func (e *ErrorQuerier) SaveCustomRule(ctx context.Context, ruleText string, enabled bool) (int64, error) {
+	return 0, e.err()
+}
+
+func (e *ErrorQuerier) DeleteCustomRule(ctx context.Context, id int64) error {
+	return e.err()
+}
+
+func (e *ErrorQuerier) GetVulnerabilities(ctx context.Context, includeMitigated bool) ([]Vulnerability, error) {
+	return nil, e.err()
+}
+
+func (e *ErrorQuerier) SaveVulnerability(ctx context.Context, v Vulnerability) (int64, error) {
+	return 0, e.err()
+}
+
+func (e *ErrorQuerier) MitigateVulnerability(ctx context.Context, id int64) error {
 	return e.err()
 }
