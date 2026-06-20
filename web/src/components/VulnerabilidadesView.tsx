@@ -14,12 +14,15 @@ import {
 } from 'lucide-react';
 import { Vulnerability, ScanHistory, ViewType } from '../types';
 import { initialVulnerabilities, initialScanHistory } from '../data/mockData';
+import { triggerScan } from '../lib/api';
+import { toast } from 'sonner';
 
 interface VulnerabilidadesViewProps {
   vulnerabilities: Vulnerability[];
   onMitigateVuln: (id: string) => void;
   selectedDeviceIP: string;
   setSelectedDeviceIP: (ip: string) => void;
+  refreshVulnerabilities?: () => Promise<void>;
 }
 
 export default function VulnerabilidadesView({
@@ -27,6 +30,7 @@ export default function VulnerabilidadesView({
   onMitigateVuln,
   selectedDeviceIP,
   setSelectedDeviceIP,
+  refreshVulnerabilities,
 }: VulnerabilidadesViewProps) {
   const [severityFilter, setSeverityFilter] = useState<'ALL' | 'CRITICAL' | 'HIGH' | 'MEDIUM'>('ALL');
   const [targetQuery, setTargetQuery] = useState(selectedDeviceIP || '192.168.1.0/24');
@@ -53,51 +57,66 @@ export default function VulnerabilidadesView({
   }, [selectedDeviceIP]);
 
   // Handle live Nmap scanning simulator
-  const handleStartScan = (e: React.FormEvent) => {
+  const handleStartScan = async (e: React.FormEvent) => {
     e.preventDefault();
     if (scanInProgress) return;
+
+    if (!targetQuery) {
+      toast.error('Debe ingresar un objetivo a escanear');
+      return;
+    }
 
     setScanInProgress(true);
     setScanProgressPercent(0);
     setHostsScannedCount(0);
-    setStatusText('Inicializando colector Nmap, buscando hosts en topología...');
+    setStatusText('Inicializando escáner Nmap y contactando objetivo...');
 
+    // Fake progress interval while waiting for backend
     let percent = 0;
     const interval = setInterval(() => {
-      percent += 5;
+      percent += 2;
+      if (percent > 90) percent = 90; // Wait at 90% until backend returns
       setScanProgressPercent(percent);
+    }, 500);
 
-      if (percent === 15) {
-        setStatusText('Haciendo solicitudes ICMP Ping a subred...');
-        setHostsScannedCount(12);
-      } else if (percent === 40) {
-        setStatusText('Identificando puertos abiertos en hosts detectados (top 1000)...');
-        setHostsScannedCount(35);
-      } else if (percent === 65) {
-        setStatusText('Corriendo scripts de vulnerabilidades NSE de seguridad...');
-        setHostsScannedCount(47);
-      } else if (percent === 85) {
-        setStatusText('Analizando firmas contra bases de datos CVE de NVD, MITRE...');
-      } else if (percent >= 100) {
-        clearInterval(interval);
-        setScanInProgress(false);
-        setStatusText('Escaneo terminado de forma exitosa.');
+    const startTime = Date.now();
 
-        // Insert new entry in local scan histories
-        const newHistory: ScanHistory = {
-          id: localScansHistory.length + 42,
-          date: 'Hoy, ' + new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
-          target: targetQuery,
-          profile: scanProfile === 'quick' ? 'Quick Scan' : scanProfile === 'full' ? 'Full Scan' : 'Service Detection',
-          duration: '1m 15s',
-          hostsScanned: 47,
-          vulnsFound: 1,
-          status: 'COMPLETED',
-        };
-        setLocalScansHistory([newHistory, ...localScansHistory]);
-        alert(`Escaneo de vulnerabilidades finalizado con éxito para el target '${targetQuery}'. Se encontró 1 vulnerabilidad menor.`);
+    try {
+      await triggerScan(targetQuery, scanProfile);
+      
+      clearInterval(interval);
+      setScanProgressPercent(100);
+      setStatusText('Escaneo terminado de forma exitosa.');
+      
+      const durationStr = Math.round((Date.now() - startTime) / 1000) + 's';
+
+      // Insert new entry in local scan histories
+      const newHistory: ScanHistory = {
+        id: localScansHistory.length + 42,
+        date: 'Hoy, ' + new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
+        target: targetQuery,
+        profile: scanProfile === 'quick' ? 'Quick Scan' : scanProfile === 'full' ? 'Full Scan' : 'Service Detection',
+        duration: durationStr,
+        hostsScanned: 1,
+        vulnsFound: 0,
+        status: 'COMPLETED',
+      };
+      setLocalScansHistory([newHistory, ...localScansHistory]);
+      
+      toast.success(`Escaneo completado para el objetivo ${targetQuery}`);
+      
+      if (refreshVulnerabilities) {
+        await refreshVulnerabilities();
       }
-    }, 400);
+    } catch (err: any) {
+      clearInterval(interval);
+      setStatusText('Error en el escaneo: ' + err.message);
+      toast.error('Fallo al ejecutar Nmap: ' + err.message);
+    } finally {
+      setTimeout(() => {
+        setScanInProgress(false);
+      }, 2000);
+    }
   };
 
   const handleExplainVulnWithAI = (vuln: Vulnerability) => {

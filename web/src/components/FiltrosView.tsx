@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Filter,
   Search,
@@ -8,20 +8,51 @@ import {
   HelpCircle,
 } from 'lucide-react';
 import { CapturedPacket } from '../types';
-import { mockPackets } from '../data/mockData';
+import { getPackets, PacketFilters } from '../lib/api';
+
+// Utility to convert base64 to hex and ascii dumps
+function decodePayload(base64Str: string | null) {
+  if (!base64Str) return { hexDump: '', asciiDump: '' };
+  try {
+    const rawStr = atob(base64Str);
+    const bytes = new Uint8Array(rawStr.length);
+    for (let i = 0; i < rawStr.length; i++) {
+      bytes[i] = rawStr.charCodeAt(i);
+    }
+    
+    let hexDump = '';
+    let asciiDump = '';
+    for (let i = 0; i < bytes.length; i += 16) {
+      const chunk = bytes.slice(i, i + 16);
+      
+      const hexChunk = Array.from(chunk)
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join(' ');
+        
+      const asciiChunk = Array.from(chunk)
+        .map(b => (b >= 32 && b <= 126) ? String.fromCharCode(b) : '.')
+        .join('');
+        
+      hexDump += '00 ' + hexChunk.padEnd(48, ' ') + '\n';
+      asciiDump += asciiChunk + '\n';
+    }
+    return { hexDump: hexDump.trimEnd(), asciiDump: asciiDump.trimEnd() };
+  } catch(e) {
+    return { hexDump: 'Error decoding payload', asciiDump: '' };
+  }
+}
 
 export default function FiltrosView() {
   const [filterType, setFilterType] = useState('ip.src');
   const [filterOperator, setFilterOperator] = useState('==');
-  const [filterValue, setFilterValue] = useState('192.168.1.100');
+  const [filterValue, setFilterValue] = useState('');
   const [payloadSearch, setPayloadSearch] = useState('');
-  const [activeFilterString, setActiveFilterString] = useState(
-    'ip.src == 192.168.1.100 && tcp.port == 443'
-  );
+  const [activeFilterString, setActiveFilterString] = useState('');
 
-  const [packetsQueue, setPacketsQueue] = useState<CapturedPacket[]>(mockPackets);
-  const [selectedPacket, setSelectedPacket] = useState<CapturedPacket | null>(mockPackets[0]);
+  const [packetsQueue, setPacketsQueue] = useState<CapturedPacket[]>([]);
+  const [selectedPacket, setSelectedPacket] = useState<CapturedPacket | null>(null);
   const [copiedHex, setCopiedHex] = useState(false);
+  const [totalItems, setTotalItems] = useState(0);
 
   const filterFields = [
     { value: 'ip.src', label: 'IP Origen' },
@@ -32,33 +63,73 @@ export default function FiltrosView() {
     { value: 'frame.len', label: 'Longitud' },
   ];
 
-  const handleApplyVisualFilter = () => {
-    const expr = `${filterType} ${filterOperator} ${filterValue}`;
-    setActiveFilterString(expr);
+  const fetchPackets = async (customFilterValue = filterValue, customPayloadSearch = payloadSearch) => {
+    try {
+      const apiFilters: PacketFilters = { limit: 100 };
+      
+      if (customPayloadSearch.trim() !== '') {
+        apiFilters.payload_search = customPayloadSearch.trim();
+      }
 
-    // Filter packet queue natively to show live filtering working beautifully!
-    const filtered = mockPackets.filter((pkt) => {
-      const val = filterValue.trim().toLowerCase();
-      if (filterType === 'ip.src') return pkt.source.toLowerCase().includes(val);
-      if (filterType === 'ip.dst') return pkt.destination.toLowerCase().includes(val);
-      if (filterType === 'ip.proto') return pkt.protocol.toLowerCase().includes(val);
-      return true;
-    });
+      if (customFilterValue.trim() !== '') {
+         if (filterType === 'ip.src') apiFilters.src_ip = customFilterValue.trim();
+         if (filterType === 'ip.dst') apiFilters.dst_ip = customFilterValue.trim();
+         if (filterType === 'ip.proto') apiFilters.protocol = customFilterValue.trim().toUpperCase();
+         if (filterType === 'tcp.port' || filterType === 'udp.port') {
+            apiFilters.port = parseInt(customFilterValue.trim());
+         }
+      }
 
-    setPacketsQueue(filtered);
-    if (filtered.length > 0) {
-      setSelectedPacket(filtered[0]);
-    } else {
-      setSelectedPacket(null);
+      const res = await getPackets(apiFilters);
+      const mappedPackets: CapturedPacket[] = res.packets.map((p, idx) => {
+        const { hexDump, asciiDump } = decodePayload(p.payload_preview);
+        return {
+          id: res.total - res.offset - idx,
+          time: new Date(p.time).toISOString().split('T')[1].slice(0, 12),
+          source: p.src_ip,
+          destination: p.dst_ip,
+          protocol: p.protocol,
+          length: p.length,
+          info: `Puerto ${p.src_port} -> ${p.dst_port}`,
+          hexDump,
+          asciiDump
+        };
+      });
+
+      setPacketsQueue(mappedPackets);
+      setTotalItems(res.total);
+      if (mappedPackets.length > 0) {
+        setSelectedPacket(mappedPackets[0]);
+      } else {
+        setSelectedPacket(null);
+      }
+    } catch (e) {
+      console.error(e);
     }
+  };
+
+  useEffect(() => {
+    fetchPackets();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleApplyVisualFilter = () => {
+    let expr = '';
+    if (filterValue.trim()) {
+      expr = `${filterType} ${filterOperator} ${filterValue}`;
+    }
+    if (payloadSearch.trim()) {
+      expr += expr ? ` && payload contains '${payloadSearch}'` : `payload contains '${payloadSearch}'`;
+    }
+    setActiveFilterString(expr);
+    fetchPackets(filterValue, payloadSearch);
   };
 
   const handleResetFilters = () => {
     setActiveFilterString('');
     setFilterValue('');
     setPayloadSearch('');
-    setPacketsQueue(mockPackets);
-    setSelectedPacket(mockPackets[0]);
+    fetchPackets('', '');
   };
 
   const handleCopyHex = () => {
@@ -127,7 +198,7 @@ export default function FiltrosView() {
             <span>AND</span>
 
             <span className="font-mono text-xs text-[#5c6473] bg-[#0a0e14] border border-[#2a3242] p-2 rounded">
-              tcp.port == 443
+              payload LIKE
             </span>
 
             <button
@@ -151,7 +222,7 @@ export default function FiltrosView() {
 
           <div className="space-y-1 bg-[#131820] py-1">
             <label className="text-[11px] font-mono text-[#9ba3b4] font-medium block">
-              Búsqueda de texto libre en Payload (Raw Hex/ASCII representation)
+              Búsqueda de texto libre en Payload (ASCII ILIKE)
             </label>
             <div className="relative">
               <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-[#5c6473]" />
@@ -160,6 +231,7 @@ export default function FiltrosView() {
                 placeholder="Ex. 'password', 'HTTP/1.1 200 OK', 'admin'..."
                 value={payloadSearch}
                 onChange={(e) => setPayloadSearch(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleApplyVisualFilter()}
                 className="w-full bg-[#0a0e14] border border-[#2a3242] focus:border-[#3b82f6] rounded pl-9 pr-4 py-2 text-xs text-[#e4e7eb] outline-none font-mono"
               />
             </div>
@@ -170,10 +242,10 @@ export default function FiltrosView() {
         <div className="bg-[#131820] border border-[#2a3242] p-4 rounded-lg">
           <div className="flex justify-between items-center pb-2.5 mb-3 border-b border-[#2a3242]">
             <span className="text-xs font-sans font-bold text-[#e4e7eb]">
-              Resultados de Captura ({packetsQueue.length} paquetes)
+              Resultados de Captura (Total: {totalItems} paquetes)
             </span>
             <span className="text-[10px] font-mono text-[#5c6473]">
-              Respuesta en 0.4s • VLAN 10 & 20
+              Mostrando {packetsQueue.length}
             </span>
           </div>
 
@@ -258,31 +330,18 @@ export default function FiltrosView() {
                   <p className="pl-4 text-[#9ba3b4] text-[11px] mt-1 space-y-0.5">
                     <span>• Protocolo detectado: {selectedPacket.protocol}</span>
                     <br />
-                    <span>• Interfaces de captura: virtual eth0 (VLAN 10)</span>
+                    <span>• Información: {selectedPacket.info}</span>
                   </p>
                 </details>
 
                 <details open className="group">
                   <summary className="outline-none filter brightness-90 hover:brightness-110 cursor-pointer text-[#e4e7eb] font-semibold list-none flex items-center justify-between">
-                    <span>🌐 Internet Protocol Version 4</span>
+                    <span>🌐 Internet Protocol</span>
                     <ChevronRight className="h-3.5 w-3.5 text-[#5c6473] transform group-open:rotate-90 transition-transform" />
                   </summary>
                   <div className="pl-4 text-[#9ba3b4] text-[11px] mt-1 font-mono leading-tight space-y-0.5">
                     <div>• Source IP: {selectedPacket.source}</div>
                     <div>• Destination IP: {selectedPacket.destination}</div>
-                    <div>• Time To Live: 64 • Header Length: 20 bytes</div>
-                  </div>
-                </details>
-
-                <details open className="group">
-                  <summary className="outline-none filter brightness-90 hover:brightness-110 cursor-pointer text-[#e4e7eb] font-semibold list-none flex items-center justify-between">
-                    <span>🔌 Connection Layer Stream details</span>
-                    <ChevronRight className="h-3.5 w-3.5 text-[#5c6473] transform group-open:rotate-90 transition-transform" />
-                  </summary>
-                  <div className="pl-4 text-[#9ba3b4] text-[11px] mt-1 font-mono leading-tight space-y-0.5">
-                    <div>• Protocol: {selectedPacket.protocol}</div>
-                    <div>• Flags: [ACK, PUSH] 0x018</div>
-                    <div>• Info: {selectedPacket.info}</div>
                   </div>
                 </details>
               </div>
@@ -297,6 +356,7 @@ export default function FiltrosView() {
                     OFFSET    HEXADECIMAL BYTES                 ASCII DECODED
                   </span>
                   {selectedPacket.hexDump.split('\n').map((line, idx) => {
+                    if (!line.trim()) return null;
                     const asciiLine = selectedPacket.asciiDump.split('\n')[idx] || '';
                     return (
                       <div key={idx} className="flex justify-between font-mono gap-1 hover:bg-[#131820] py-0.5 rounded px-1">
@@ -306,12 +366,15 @@ export default function FiltrosView() {
                       </div>
                     );
                   })}
+                  {selectedPacket.hexDump.trim() === '' && (
+                    <span className="text-[#5c6473] italic">No payload available.</span>
+                  )}
                 </div>
               </div>
             </div>
 
             <div className="bg-[#0a0e14] p-2.5 border border-[#2a3242]/40 rounded mt-4 text-[10px] font-mono text-[#5c6473]">
-              <span>Use tcpdump en el host debian para exportar a PCAP.</span>
+              <span>Mostrando datos en vivo desde el backend ViewRed.</span>
             </div>
           </div>
         ) : (

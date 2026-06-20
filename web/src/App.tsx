@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
@@ -11,14 +11,15 @@ import VulnerabilidadesView from './components/VulnerabilidadesView';
 import AsistenteView from './components/AsistenteView';
 import ConfiguracionView from './components/ConfiguracionView';
 import NotFoundView from './components/NotFoundView';
+import { Toaster, toast } from 'sonner';
 
 import { ViewType, NetworkAlert, Vulnerability, ChatMessage } from './types';
 import { llm, type Message } from './lib/llm';
+import { getRecentAlerts, acknowledgeAlert, AlertBackend } from './lib/api';
 import {
-  initialAlerts,
   initialDevices,
-  initialVulnerabilities,
 } from './data/mockData';
+import { getVulnerabilities, mitigateVulnerability, VulnerabilityBackend } from './lib/api';
 
 export default function App() {
   // currentView is kept only for Header active-state styling during the
@@ -33,10 +34,51 @@ export default function App() {
 
   // Core App states
   const [devices, setDevices] = useState(initialDevices);
-  const [alerts, setAlerts] = useState<NetworkAlert[]>(initialAlerts);
-  const [vulnerabilities, setVulnerabilities] = useState<Vulnerability[]>(initialVulnerabilities);
+  const [alerts, setAlerts] = useState<NetworkAlert[]>([]);
+  const [vulnerabilities, setVulnerabilities] = useState<Vulnerability[]>([]);
   const [selectedDeviceIP, setSelectedDeviceIP] = useState<string>('');
   const [selectedAlertToExplain, setSelectedAlertToExplain] = useState<NetworkAlert | null>(null);
+
+  // Fetch initial alerts and vulnerabilities
+  useEffect(() => {
+    getRecentAlerts(100).then(setAlerts).catch(console.error);
+    fetchVulnerabilities();
+
+    const es = new EventSource('/api/v1/stream/alerts');
+    es.addEventListener('alert', (e) => {
+      try {
+        const a: AlertBackend = JSON.parse(e.data);
+        const newAlert: NetworkAlert = {
+          id: String(a.id),
+          timestamp: a.time,
+          severity: (a.severity.toUpperCase() === 'CRITICAL' || a.severity.toUpperCase() === 'WARNING') 
+            ? (a.severity.toUpperCase() as 'CRITICAL' | 'WARNING') 
+            : 'INFO',
+          title: a.title,
+          description: a.description || '',
+          source: a.source,
+          destination: 'Desconocido',
+          confidence: a.score,
+          origin: 'Detección Local',
+          timeAgo: 'Hace un momento',
+          acknowledged: !!a.acknowledged_at,
+        };
+        setAlerts((prev) => [newAlert, ...prev]);
+
+        // Trigger toast notification
+        if (newAlert.severity === 'CRITICAL') {
+          toast.error(newAlert.title, { description: newAlert.source });
+        } else if (newAlert.severity === 'WARNING') {
+          toast.warning(newAlert.title, { description: newAlert.source });
+        } else {
+          toast.info(newAlert.title, { description: newAlert.source });
+        }
+      } catch (err) {
+        console.error('Error parsing alert SSE', err);
+      }
+    });
+    return () => es.close();
+  }, []);
 
   // Chat conversation logs state
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([
@@ -53,16 +95,51 @@ export default function App() {
     setIsCapturing(!isCapturing);
   };
 
-  const handleAcknowledgeAlert = (id: string) => {
-    setAlerts((prev) =>
-      prev.map((alert) => (alert.id === id ? { ...alert, acknowledged: true } : alert))
-    );
+  const handleAcknowledgeAlert = async (id: string) => {
+    try {
+      await acknowledgeAlert(id);
+      setAlerts((prev) =>
+        prev.map((alert) => (alert.id === id ? { ...alert, acknowledged: true } : alert))
+      );
+    } catch (err) {
+      console.error('Failed to acknowledge alert', err);
+    }
   };
 
-  const handleMitigateVuln = (id: string) => {
-    setVulnerabilities((prev) =>
-      prev.map((v) => (v.id === id ? { ...v, mitigated: true } : v))
-    );
+  const fetchVulnerabilities = async () => {
+    try {
+      const backendVulns = await getVulnerabilities();
+      const mapped = backendVulns.map((v: VulnerabilityBackend): Vulnerability => ({
+        id: String(v.id),
+        cve: v.cve_id || 'INFO-PORT',
+        title: v.description.split('\n')[0] || 'Vulnerabilidad Detectada',
+        description: v.description,
+        severity: (v.cvss_score && v.cvss_score >= 9.0) ? 'CRITICAL' : (v.cvss_score && v.cvss_score >= 7.0) ? 'HIGH' : 'MEDIUM',
+        cvss: v.cvss_score ? v.cvss_score : 0,
+        targetDevice: 'Device',
+        targetIP: v.device_ip,
+        mitigated: v.mitigated,
+        mitigationSteps: 'Aplicar parche o deshabilitar puerto ' + (v.port || ''),
+        detectedAt: v.discovered_at,
+        scanId: v.id,
+      }));
+      setVulnerabilities(mapped);
+    } catch (err) {
+      console.error('Failed to fetch vulnerabilities', err);
+    }
+  };
+
+  const handleMitigateVuln = async (id: string) => {
+    try {
+      await mitigateVulnerability(parseInt(id));
+      setVulnerabilities((prev) =>
+        prev.map((v) => (v.id === id ? { ...v, mitigated: true } : v))
+      );
+      toast.success('Vulnerabilidad mitigada exitosamente');
+    } catch (err) {
+      console.error('Failed to mitigate vuln', err);
+      toast.error('Error al mitigar vulnerabilidad');
+    }
   };
 
   const handleClearChatHistory = () => {
@@ -84,26 +161,24 @@ export default function App() {
     const updatedHistory: ChatMessage[] = [...chatHistory, userMsg];
     setChatHistory(updatedHistory);
 
+    const botMsgId = Date.now() + 1;
+    setChatHistory((prev) => [...prev, { id: botMsgId, sender: 'bot', content: '' }]);
+
     const messages: Message[] = updatedHistory.map((msg) => ({
       role: msg.sender === 'admin' ? 'user' : 'assistant',
       content: msg.content,
     }));
 
     try {
-      const replyContent = await llm.chat(messages);
-      const botMsg: ChatMessage = {
-        id: Date.now() + 1,
-        sender: 'bot',
-        content: replyContent,
-      };
-      setChatHistory((prev) => [...prev, botMsg]);
+      await llm.stream(messages, (token) => {
+        setChatHistory((prev) => prev.map(msg => 
+          msg.id === botMsgId ? { ...msg, content: msg.content + token } : msg
+        ));
+      });
     } catch (err) {
-      const botMsg: ChatMessage = {
-        id: Date.now() + 1,
-        sender: 'bot',
-        content: `[Error] No se pudo contactar al modelo: ${err}`,
-      };
-      setChatHistory((prev) => [...prev, botMsg]);
+      setChatHistory((prev) => prev.map(msg => 
+        msg.id === botMsgId ? { ...msg, content: msg.content + "\n\n[Error de conexión con el Asistente AI]" } : msg
+      ));
     }
   };
 
@@ -111,6 +186,7 @@ export default function App() {
 
   return (
     <div id="viewred-app-root" className="flex h-screen bg-[#0a0e14] overflow-hidden select-none">
+        <Toaster theme="dark" richColors position="top-right" />
         {/* Sidebar Control left */}
         <Sidebar
           collapsed={collapsed}
@@ -138,7 +214,6 @@ export default function App() {
                 element={
                   <DashboardView
                     setView={setView}
-                    alerts={alerts}
                     setSelectedAlert={setSelectedAlertToExplain}
                   />
                 }
@@ -177,6 +252,7 @@ export default function App() {
                     onMitigateVuln={handleMitigateVuln}
                     selectedDeviceIP={selectedDeviceIP}
                     setSelectedDeviceIP={setSelectedDeviceIP}
+                    refreshVulnerabilities={fetchVulnerabilities}
                   />
                 }
               />

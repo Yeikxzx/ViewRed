@@ -1,19 +1,25 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Network,
-  Tv,
-  Database,
   Smartphone,
   Server,
-  Activity,
-  ChevronRight,
-  Shield,
   HelpCircle,
-  TrendingUp,
   X,
   Play,
+  Monitor,
+  Printer
 } from 'lucide-react';
-import { ReactFlow, useNodesState, useEdgesState, Background, Controls, Node, Edge } from '@xyflow/react';
+import { 
+  ReactFlow, 
+  useNodesState, 
+  useEdgesState, 
+  Background, 
+  Controls, 
+  Node, 
+  Edge,
+  Handle,
+  Position
+} from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { NetworkDevice, ViewType } from '../types';
 
@@ -23,10 +29,50 @@ interface TopologiaViewProps {
   setSelectedDeviceIP: (ip: string) => void;
 }
 
+// Custom Node for devices
+const DeviceNode = ({ data, isConnectable }: any) => {
+  const { device } = data;
+  
+  // Decide icon based on vendor heuristics
+  let Icon = HelpCircle;
+  const vendor = (device.vendor || '').toLowerCase();
+  if (vendor.includes('apple') || vendor.includes('samsung') || vendor.includes('huawei')) Icon = Smartphone;
+  else if (vendor.includes('cisco') || vendor.includes('juniper') || vendor.includes('ubiquiti')) Icon = Server;
+  else if (vendor.includes('hp') || vendor.includes('epson')) Icon = Printer;
+  else if (vendor.includes('intel') || vendor.includes('dell')) Icon = Monitor;
+
+  // Decide if offline (> 5 mins without traffic)
+  const lastSeenDate = new Date(device.last_seen);
+  const isOffline = (new Date().getTime() - lastSeenDate.getTime()) > 5 * 60 * 1000;
+
+  return (
+    <div className={`flex items-center gap-2 px-3 py-2 border rounded-lg bg-[#1c2230] shadow-sm transition-all ${isOffline ? 'opacity-50 border-[#5c6473]' : 'border-[#3b82f6] shadow-[#3b82f6]/20'}`}>
+      <Handle type="target" position={Position.Top} isConnectable={isConnectable} className="w-2 h-2 bg-[#5c6473] border-none" />
+      <div className="flex-shrink-0">
+        <Icon className={`h-5 w-5 ${isOffline ? 'text-[#5c6473]' : 'text-[#3b82f6]'}`} />
+      </div>
+      <div className="flex flex-col text-left">
+        <span className="text-[#e4e7eb] font-mono text-[11px] font-bold leading-tight">
+          {device.hostname || device.ip}
+        </span>
+        {device.hostname && (
+          <span className="text-[#9ba3b4] font-mono text-[9px] leading-tight">
+            {device.ip}
+          </span>
+        )}
+      </div>
+      <Handle type="source" position={Position.Bottom} isConnectable={isConnectable} className="w-2 h-2 bg-[#5c6473] border-none" />
+    </div>
+  );
+};
+
 export default function TopologiaView({ setView, setSelectedDeviceIP }: TopologiaViewProps) {
   const [selectedDevice, setSelectedDevice] = useState<any>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+
+  // Memoize nodeTypes so React Flow doesn't recreate them every render
+  const nodeTypes = useMemo(() => ({ device: DeviceNode }), []);
 
   useEffect(() => {
     const fetchTopology = async () => {
@@ -35,45 +81,52 @@ export default function TopologiaView({ setView, setSelectedDeviceIP }: Topologi
         if (!res.ok) throw new Error('Failed to fetch topology');
         const data = await res.json();
         
-        // Transform data to ReactFlow nodes and edges
         const radius = 250;
         const cx = 350;
         const cy = 250;
-        
-        const newNodes: Node[] = (data.nodes || []).map((device: any, index: number, arr: any[]) => {
-          const angle = (index / arr.length) * 2 * Math.PI;
-          return {
-            id: String(device.id),
-            position: {
-              x: cx + radius * Math.cos(angle),
-              y: cy + radius * Math.sin(angle),
-            },
-            data: { 
-              label: device.hostname || device.ip,
-              device,
-            },
-            style: {
-              background: '#1c2230',
-              color: '#e4e7eb',
-              border: '1px solid #3b82f6',
-              borderRadius: '8px',
-              padding: '10px',
-              fontSize: '12px',
-              fontFamily: 'monospace'
+
+        // Use a functional state update to preserve dragged node positions
+        setNodes((currentNodes) => {
+          // Copy current nodes to easily find them
+          const nextNodes = [...currentNodes];
+          
+          (data.nodes || []).forEach((dev: any, index: number, arr: any[]) => {
+            const existingNodeIndex = nextNodes.findIndex(n => n.id === String(dev.id));
+            if (existingNodeIndex >= 0) {
+              // Node exists, just update data
+              nextNodes[existingNodeIndex] = {
+                ...nextNodes[existingNodeIndex],
+                data: { ...nextNodes[existingNodeIndex].data, device: dev, label: dev.hostname || dev.ip }
+              };
+            } else {
+              // New node, place it in a circular layout
+              const angle = (index / arr.length) * 2 * Math.PI;
+              nextNodes.push({
+                id: String(dev.id),
+                type: 'device',
+                position: {
+                  x: cx + radius * Math.cos(angle),
+                  y: cy + radius * Math.sin(angle),
+                },
+                data: { label: dev.hostname || dev.ip, device: dev },
+              });
             }
-          };
+          });
+          return nextNodes;
         });
 
-        const newEdges: Edge[] = (data.edges || []).map((edge: any) => ({
+        // Edges can be fully replaced since React Flow matches them by ID naturally
+        setEdges((data.edges || []).map((edge: any) => ({
           id: String(edge.id),
           source: String(edge.src_device_id),
           target: String(edge.dst_device_id),
           animated: true,
-          style: { stroke: '#3b82f6', strokeWidth: Math.max(1, Math.min(edge.bytes_count / 1000, 5)) }
-        }));
+          style: { 
+            stroke: edge.bytes_count > 1000000 ? '#ef4444' : '#3b82f6', 
+            strokeWidth: Math.max(1, Math.min(edge.bytes_count / 10000, 5)) 
+          }
+        })));
 
-        setNodes(newNodes);
-        setEdges(newEdges);
       } catch (err) {
         console.error('Topology fetch error:', err);
       }
@@ -109,6 +162,7 @@ export default function TopologiaView({ setView, setSelectedDeviceIP }: Topologi
             <ReactFlow
               nodes={nodes}
               edges={edges}
+              nodeTypes={nodeTypes}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               onNodeClick={onNodeClick}
@@ -144,11 +198,11 @@ export default function TopologiaView({ setView, setSelectedDeviceIP }: Topologi
                 </div>
                 <div className="flex justify-between border-b border-[#1c2230]/40 pb-1.5">
                   <span className="text-[#5c6473]">Distribuidor (OEM)</span>
-                  <span className="text-[#9ba3b4]">{selectedDevice.vendor}</span>
+                  <span className="text-[#9ba3b4]">{selectedDevice.vendor || 'Desconocido'}</span>
                 </div>
                 <div className="flex justify-between border-b border-[#1c2230]/40 pb-1.5">
                   <span className="text-[#5c6473]">Último Registro</span>
-                  <span className="text-[#9ba3b4]">{selectedDevice.last_seen}</span>
+                  <span className="text-[#9ba3b4]">{new Date(selectedDevice.last_seen).toLocaleString()}</span>
                 </div>
               </div>
             </div>

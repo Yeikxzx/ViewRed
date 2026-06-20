@@ -1,19 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { MockLLMClient } from './llm';
+import { BackendLLMClient } from './llm';
 
-describe('MockLLMClient', () => {
-  it('returns a placeholder response', async () => {
-    const client = new MockLLMClient();
-    const response = await client.chat([
+describe('BackendLLMClient', () => {
+  it('throws an error if chat() is called directly', async () => {
+    const client = new BackendLLMClient();
+    await expect(client.chat([
       { role: 'user', content: '¿Qué pasó en la red?' },
-    ]);
-    expect(response).toBeTruthy();
-    expect(typeof response).toBe('string');
-    expect(response.length).toBeGreaterThan(0);
+    ])).rejects.toThrow('chat() is deprecated, use stream()');
   });
 
   it('reports as available', async () => {
-    const client = new MockLLMClient();
+    const client = new BackendLLMClient();
     expect(await client.isAvailable()).toBe(true);
   });
 });

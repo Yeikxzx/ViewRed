@@ -1,5 +1,5 @@
-// LLM client abstraction. The real OllamaClient is implemented in plan 6.
-// For plan 1, we use MockLLMClient which returns a placeholder string.
+// LLM client abstraction. The real OllamaClient connects to the Go backend.
+// The backend acts as a proxy to local Ollama and handles DB persistence.
 
 export interface Message {
   role: 'user' | 'assistant' | 'system';
@@ -8,21 +8,67 @@ export interface Message {
 
 export interface LLMClient {
   chat(messages: Message[]): Promise<string>;
-  stream?(messages: Message[], onToken: (token: string) => void): Promise<void>;
+  stream(messages: Message[], onToken: (token: string) => void): Promise<void>;
   isAvailable(): Promise<boolean>;
 }
 
-export class MockLLMClient implements LLMClient {
+export class BackendLLMClient implements LLMClient {
+  // We use a single conversation_id for MVP V1 to have a global chat
+  private conversationId = '00000000-0000-0000-0000-000000000001';
+
   async chat(messages: Message[]): Promise<string> {
-    const last = messages[messages.length - 1];
-    return `[Mock LLM] Recibí tu mensaje: "${last?.content ?? ''}". ` +
-      `La integración real con Ollama (Qwen 2.5 3B) llega en el plan 6.`;
+    throw new Error('chat() is deprecated, use stream()');
+  }
+
+  async stream(messages: Message[], onToken: (token: string) => void): Promise<void> {
+    const res = await fetch('/api/v1/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        conversation_id: this.conversationId,
+        messages: messages,
+      }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`HTTP error! status: ${res.status}`);
+    }
+
+    if (!res.body) throw new Error('No body in response');
+    
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      const chunk = decoder.decode(value, { stream: true });
+      // SSE format parsing: data: {"message": {"content": "..."}}\n\n
+      const lines = chunk.split('\n');
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const dataStr = line.slice(6);
+            if (dataStr === '[DONE]') break;
+            
+            const data = JSON.parse(dataStr);
+            if (data.message && data.message.content) {
+              onToken(data.message.content);
+            }
+          } catch (e) {
+            // Ignore parse errors on partial chunks
+          }
+        }
+      }
+    }
   }
 
   async isAvailable(): Promise<boolean> {
+    // For now we assume the Go backend is always available to proxy.
+    // If Ollama is down, the stream will throw an error and UI handles it.
     return true;
   }
 }
 
-// Default export is the mock for now. Plan 6 replaces this with OllamaClient.
-export const llm: LLMClient = new MockLLMClient();
+export const llm: LLMClient = new BackendLLMClient();

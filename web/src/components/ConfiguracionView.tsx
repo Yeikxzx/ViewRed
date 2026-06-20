@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import {
   Settings,
   Tv,
@@ -9,10 +10,13 @@ import {
   Play,
   Check,
   RefreshCw,
+  ShieldAlert,
+  Trash2,
+  Plus
 } from 'lucide-react';
 
 export default function ConfiguracionView() {
-  const [activeTab, setActiveTab] = useState<'general' | 'captura' | 'integracion' | 'logs'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'captura' | 'integracion' | 'reglas' | 'logs'>('general');
   const [ollamaURL, setOllamaURL] = useState('http://127.0.0.1:11434');
   const [ollamaConnected, setOllamaConnected] = useState(true);
   const [testingConnection, setTestingConnection] = useState(false);
@@ -20,6 +24,49 @@ export default function ConfiguracionView() {
   const [suricataPath, setSuricataPath] = useState('/etc/suricata/suricata.yaml');
   const [autoArchive, setAutoArchive] = useState(true);
   const [saveToast, setSaveToast] = useState(false);
+
+  const [customRules, setCustomRules] = useState<{ id: number; rule_text: string; enabled: boolean }[]>([]);
+  const [newRuleText, setNewRuleText] = useState('');
+
+  useEffect(() => {
+    fetch('/api/v1/rules')
+      .then((res) => res.json())
+      .then((data) => setCustomRules(data))
+      .catch(console.error);
+  }, []);
+
+  const handleAddRule = async () => {
+    if (!newRuleText.trim()) return;
+    try {
+      const res = await fetch('/api/v1/rules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rule_text: newRuleText, enabled: true }),
+      });
+      if (res.ok) {
+        const rule = await res.json();
+        setCustomRules((prev) => [...prev, rule]);
+        setNewRuleText('');
+        toast.success("Regla añadida con éxito");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Error al añadir la regla");
+    }
+  };
+
+  const handleDeleteRule = async (id: number) => {
+    try {
+      const res = await fetch(`/api/v1/rules/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        setCustomRules((prev) => prev.filter((r) => r.id !== id));
+        toast.success("Regla eliminada con éxito");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Error al eliminar la regla");
+    }
+  };
 
   const handleTestOllamaConnection = () => {
     setTestingConnection(true);
@@ -77,6 +124,15 @@ export default function ConfiguracionView() {
         >
           <Cpu className="h-4 w-4" />
           <span>IA Integración & Rutas</span>
+        </button>
+        <button
+          onClick={() => setActiveTab('reglas')}
+          className={`w-full flex items-center gap-2.5 py-2 px-3.5 rounded text-xs font-mono text-left transition-all ${
+            activeTab === 'reglas' ? 'bg-[#1c2230] text-[#3b82f6] font-bold' : 'text-[#9ba3b4] hover:text-white hover:bg-[#131820]/50'
+          }`}
+        >
+          <ShieldAlert className="h-4 w-4" />
+          <span>Reglas de Detección</span>
         </button>
         <button
           onClick={() => setActiveTab('logs')}
@@ -252,6 +308,65 @@ export default function ConfiguracionView() {
                   onChange={(e) => setSuricataPath(e.target.value)}
                   className="bg-[#0a0e14] border border-[#2a3242] focus:border-[#3b82f6] text-xs text-[#e4e7eb] rounded p-2 outline-none font-mono w-full"
                 />
+              </div>
+            </div>
+          )}
+
+          {/* Reglas de Deteccion Tab */}
+          {activeTab === 'reglas' && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 border-b border-[#2a3242] pb-2.5 mb-1">
+                <ShieldAlert className="h-4 w-4 text-[#3b82f6]" />
+                <span className="font-sans font-bold text-sm text-[#e4e7eb]">
+                  Reglas Personalizadas (Suricata-like)
+                </span>
+              </div>
+
+              {/* Add Rule Form */}
+              <div className="space-y-2 pb-4 border-b border-[#1c2230]">
+                <label className="text-[11px] font-mono text-[#9ba3b4] block">AÑADIR NUEVA REGLA</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newRuleText}
+                    onChange={(e) => setNewRuleText(e.target.value)}
+                    placeholder="alert tcp any any -> any 80 (msg:&quot;HTTP Traffic&quot;; severity:INFO;)"
+                    className="bg-[#0a0e14] border border-[#2a3242] focus:border-[#3b82f6] text-xs text-[#e4e7eb] rounded p-2 outline-none font-mono flex-1"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddRule}
+                    className="bg-[#3b82f6] hover:bg-[#3b82f6]/95 text-white py-1.5 px-3 rounded text-xs font-mono font-bold transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Plus className="h-4 w-4" />
+                    <span>Añadir</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Rules List */}
+              <div className="space-y-2">
+                <label className="text-[11px] font-mono text-[#9ba3b4] block">REGLAS ACTIVAS ({customRules.length})</label>
+                {customRules.length === 0 ? (
+                  <div className="text-xs text-[#5c6473] font-mono py-4 text-center border border-dashed border-[#2a3242] rounded">
+                    No hay reglas personalizadas cargadas.
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-64 overflow-y-auto pr-2">
+                    {customRules.map((r) => (
+                      <div key={r.id} className="bg-[#0a0e14] border border-[#2a3242] p-2.5 rounded flex items-start justify-between gap-4">
+                        <span className="text-[11px] font-mono text-[#e4e7eb] break-all pt-0.5">{r.rule_text}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteRule(r.id)}
+                          className="text-[#ef4444] hover:text-[#ef4444]/80 p-1"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}

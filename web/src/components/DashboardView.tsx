@@ -17,12 +17,9 @@ import {
   CartesianGrid,
   Tooltip,
 } from 'recharts';
-import { KPI, ViewType, NetworkAlert } from '../types';
-import {
-  topTalkersData,
-  protocolDist,
-  initialTrafficHistory,
-} from '../data/mockData';
+import { KPI, ViewType, NetworkAlert, IPVolume } from '../types';
+import { initialTrafficHistory } from '../data/mockData';
+import { getTopTalkers, getProtocols, getRecentAlerts } from '../lib/api';
 import { useSSE } from '../lib/sse';
 import { useSSEStore } from '../store/sse-store';
 import {
@@ -66,15 +63,50 @@ function formatInteger(value: number): string {
 
 interface DashboardViewProps {
   setView: (view: ViewType) => void;
-  alerts: NetworkAlert[];
   setSelectedAlert: (alert: NetworkAlert | null) => void;
 }
 
 export default function DashboardView({
   setView,
-  alerts,
   setSelectedAlert,
 }: DashboardViewProps) {
+  const [topTalkers, setTopTalkers] = useState<IPVolume[]>([]);
+  const [protocols, setProtocols] = useState<{name: string, value: string, color: string}[]>([]);
+  const [recentAlerts, setRecentAlerts] = useState<NetworkAlert[]>([]);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const [ttRes, protoRes, alertsRes] = await Promise.all([
+          getTopTalkers(),
+          getProtocols(),
+          getRecentAlerts(4)
+        ]);
+        
+        const maxBytes = Math.max(...ttRes.top_talkers.map(t => t.bytes), 1);
+        setTopTalkers(ttRes.top_talkers.map(t => ({
+          ip: t.src_ip,
+          volume: formatBytesRate(t.bytes),
+          percentage: (t.bytes / maxBytes) * 100
+        })));
+        
+        const colors: Record<string, string> = { 'TCP': '#3b82f6', 'UDP': '#10b981', 'ICMP': '#f59e0b', 'HTTPS': '#8b5cf6', 'ARP': '#06b6d4' };
+        setProtocols(protoRes.protocols.map(p => ({
+          name: p.protocol,
+          value: p.percentage.toFixed(1),
+          color: colors[p.protocol.toUpperCase()] || '#9ba3b4'
+        })));
+        
+        setRecentAlerts(alertsRes);
+      } catch (err) {
+        console.error("Error fetching dashboard data:", err);
+      }
+    };
+    
+    fetchData();
+    const interval = setInterval(fetchData, 5000);
+    return () => clearInterval(interval);
+  }, []);
   // Open the SSE stream. The hook handles EventSource lifecycle,
   // exponential-backoff reconnection, and writes incoming payloads
   // to the global Zustand store under METRICS_URL. We capture the
@@ -444,29 +476,31 @@ export default function DashboardView({
                   strokeWidth="8"
                   fill="transparent"
                 />
-                {/* TCP Section (blue) - 50% */}
-                <circle
-                  cx="50"
-                  cy="50"
-                  r="40"
-                  stroke="#3b82f6"
-                  strokeWidth="8"
-                  fill="transparent"
-                  strokeDasharray="251.2"
-                  strokeDashoffset="125.6"
-                />
-                {/* HTTPS Section (purple) - 25% */}
-                <circle
-                  cx="50"
-                  cy="50"
-                  r="40"
-                  stroke="#8b5cf6"
-                  strokeWidth="8"
-                  fill="transparent"
-                  strokeDasharray="251.2"
-                  strokeDashoffset="188.4"
-                  className="transform rotate-[180deg] origin-center"
-                />
+                {(() => {
+                  let cumulative = 0;
+                  return protocols.map((p, i) => {
+                    const percent = parseFloat(p.value);
+                    if (percent === 0) return null;
+                    const dashoffset = 251.3274 - (percent / 100) * 251.3274;
+                    const rotate = (cumulative / 100) * 360;
+                    cumulative += percent;
+                    return (
+                      <circle
+                        key={i}
+                        cx="50"
+                        cy="50"
+                        r="40"
+                        stroke={p.color}
+                        strokeWidth="8"
+                        fill="transparent"
+                        strokeDasharray="251.3274"
+                        strokeDashoffset={dashoffset}
+                        transform={`rotate(${rotate} 50 50)`}
+                        className="transition-all duration-1000 ease-out"
+                      />
+                    );
+                  });
+                })()}
               </svg>
               {/* Inner Circle metrics */}
               <div className="text-center">
@@ -481,7 +515,7 @@ export default function DashboardView({
 
             {/* Legends */}
             <div className="grid grid-cols-2 gap-x-6 gap-y-2 mt-4 w-full px-2">
-              {protocolDist.map((proto, index) => (
+              {protocols.map((proto, index) => (
                 <div key={index} className="flex items-center gap-2 text-xs">
                   <span
                     className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
@@ -527,7 +561,7 @@ export default function DashboardView({
               <span className="col-span-2 text-right uppercase">Total</span>
             </div>
 
-            {topTalkersData.map((talker, idx) => (
+            {topTalkers.map((talker, idx) => (
               <div
                 key={idx}
                 className="grid grid-cols-12 items-center text-xs"
@@ -570,7 +604,7 @@ export default function DashboardView({
           </div>
 
           <div className="space-y-3.5 max-h-64 overflow-y-auto pr-1">
-            {alerts.slice(0, 4).map((alert) => (
+            {recentAlerts.map((alert) => (
               <div
                 key={alert.id}
                 onClick={() => handleAlertInteraction(alert)}

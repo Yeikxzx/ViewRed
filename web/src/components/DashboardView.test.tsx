@@ -22,11 +22,10 @@ const noopSetView = vi.fn();
 const noopSetSelectedAlert = vi.fn();
 const noopReconnect = vi.fn();
 
-const renderDashboard = (alerts: NetworkAlert[] = []) =>
+const renderDashboard = () =>
   render(
     <DashboardView
       setView={noopSetView}
-      alerts={alerts}
       setSelectedAlert={noopSetSelectedAlert}
     />,
   );
