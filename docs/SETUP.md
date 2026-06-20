@@ -119,13 +119,25 @@ nvm use 24.16.0
 ```powershell
 node --version   # v24.16.0
 npm --version    # 11.13.0
+
+# Instalar pnpm globalmente (package manager del proyecto)
+npm install -g pnpm@9.12.0
+pnpm --version   # 9.12.0
+```
+
+### Instalar pnpm (package manager)
+
+```powershell
+# El proyecto usa pnpm en vez de npm
+npm install -g pnpm
+# pnpm 9.12+ (proyecto usa pnpm 9.12.0)
 ```
 
 ### Instalar dependencias del frontend
 
 ```powershell
 cd web
-npm install
+pnpm install
 ```
 
 Esto instala:
@@ -418,17 +430,17 @@ go test ./...
 ```powershell
 cd web
 npm install
-npm run build
+pnpm build
 # Debe buildear sin errores
 
-npx vitest run
+pnpm vitest run
 # Debe mostrar: 8 files, 91 tests passed
 ```
 
 ### 9.4 TypeScript
 
 ```powershell
-npx tsc --noEmit
+pnpm tsc --noEmit
 # Sin errores
 ```
 
@@ -459,7 +471,8 @@ if ($process) { Stop-Process -Id $process.OwningProcess -Force }
 ```
  1. Git                          winget install Git.Git
  2. Go 1.26                      winget install GoLang.Go.1.26
- 3. Node.js 24 LTS               winget install OpenJS.NodeJS.LTS
+  3. Node.js 24 LTS               winget install OpenJS.NodeJS.LTS
+                                     → npm install -g pnpm@9.12.0
  4. MinGW-w64 (para CGO)         winget install MSYS2.MSYS2
                                     → pacman -S mingw-w64-x86_64-gcc
   5. Clonar repo                  git clone <url>
@@ -470,7 +483,7 @@ if ($process) { Stop-Process -Id $process.OwningProcess -Force }
   8. Ollama + qwen2.5:3b          winget install Ollama.Ollama
                                      → ollama pull qwen2.5:3b
   9. Npcap (opcional)             Descargar de npcap.com
- 10. npm install                  cd web && npm install
+ 10. pnpm install                 cd web && pnpm install
 ```
 
 **Tiempo estimado total**: 45-90 minutos dependiendo de velocidad de internet.
@@ -486,7 +499,7 @@ o descargarlos post-formateo:
 |---|---|
 | `onnxruntime.dll` | Descargar de GitHub Releases | 11 MB |
 | `oui.txt` | Se genera automáticamente al correr `discovery.NewEngine()` | ~3 MB |
-| `node_modules/` | `npm install` | ~200 MB |
+| `node_modules/` | `pnpm install` | ~200 MB |
 
 Los modelos ONNX (`models/isolation_forest.onnx`, `models/random_forest.onnx`)
 **SÍ están commiteados** (~1.2 MB + 42 KB).
