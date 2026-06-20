@@ -15,7 +15,7 @@
 4. [Git + clonar repo](#4-git--clonar-repo)
 5. [ONNX Runtime](#5-onnx-runtime)
 6. [Ollama + LLM](#6-ollama--llm)
-7. [PostgreSQL + TimescaleDB](#7-postgresql--timescaledb)
+7. [Docker + PostgreSQL + TimescaleDB](#7-docker--postgresql--timescaledb)
 8. [Npcap (Windows)](#8-npcap-windows)
 9. [Verificación final](#9-verificación-final)
 10. [Resumen: orden de instalación](#10-resumen-orden-de-instalación)
@@ -274,44 +274,54 @@ ollama pull qwen2.5:7b
 
 ---
 
-## 7. PostgreSQL + TimescaleDB
+## 7. Docker + PostgreSQL + TimescaleDB
 
-> **IMPORTANTE**: En Windows sin Docker, TimescaleDB requiere instalación
-> manual. Para desarrollo básico, PostgreSQL solo alcanza (las features
-> de TimescaleDB no son críticas para el desarrollo).
+> **RECOMENDADO**: Usar Docker para la base de datos. Es mucho más
+> sencillo que instalar PostgreSQL y TimescaleDB nativos en Windows.
+> El proyecto ya tiene un `docker-compose.dev.yml` listo.
 
-### Opción 1: PostgreSQL standalone
+### Instalar Docker Desktop
 
 ```powershell
-winget install PostgreSQL.PostgreSQL.16
-# Versión: 16.x mínima
+# Opción 1: winget
+winget install Docker.DockerDesktop
+
+# Opción 2: Descargar de https://www.docker.com/products/docker-desktop/
 ```
 
-### Opción 2: TimescaleDB (recomendado para producción)
+Después de instalar, **reiniciar la máquina** y abrir Docker Desktop
+para que termine la configuración inicial.
+
+### Verificar Docker
 
 ```powershell
-# 1. Instalar PostgreSQL 16 desde: https://www.enterprisedb.com/downloads/postgres-postgresql-downloads
-# 2. Agregar el repo de TimescaleDB:
-#    https://docs.timescale.com/self-hosted/latest/install/installation-windows/
-# 3. Instalar TimescaleDB
+docker --version
+docker compose version
+# Ambos deben mostrar versión sin errores
 ```
 
-### Configurar base de datos
+### Levantar la base de datos
 
 ```powershell
-# Conectar con psql (agregar a PATH si es necesario)
-psql -U postgres
+# Desde la raíz del proyecto
+cd C:\Users\<tu-user>\Desktop\Viewred
+docker compose -f deploy/docker-compose.dev.yml up -d
 
-# Crear usuario y base
-CREATE USER viewred WITH PASSWORD 'viewred_dev_only';
-CREATE DATABASE viewred OWNER viewred;
+# Verificar que está corriendo
+docker ps
+# Debe mostrar: viewred-postgres, puerto 5432, status Up
+```
 
-# Si instalaste TimescaleDB:
-\c viewred
-CREATE EXTENSION IF NOT EXISTS timescaledb;
+### Verificar conexión
 
-# Salir
-\q
+```powershell
+# Usando psql dentro del container
+docker exec -it viewred-postgres psql -U viewred -d viewred -c "SELECT 1 AS ok;"
+
+# Debe devolver:
+#  ok
+# ---- 
+#   1
 ```
 
 ### Connection string (dev)
@@ -324,10 +334,39 @@ postgres://viewred:viewred_dev_only@localhost:5432/viewred?sslmode=disable
 
 ```powershell
 # Las migraciones se ejecutan automáticamente al iniciar el binario.
-# Para correrlas manualmente:
 cd cmd/viewred
-go run .  # Arranca el server y corre migraciones si hay DB disponible
+go run .
+# Si la DB está disponible, corre migraciones solo
 ```
+
+### Detener la base de datos
+
+```powershell
+docker compose -f deploy/docker-compose.dev.yml down
+# Para eliminar también los datos:
+docker compose -f deploy/docker-compose.dev.yml down -v
+```
+
+### Alternativa: PostgreSQL standalone (sin Docker)
+
+Si no querés Docker, instalá PostgreSQL directamente:
+
+```powershell
+winget install PostgreSQL.PostgreSQL.16
+```
+
+Y creá la base manualmente:
+
+```powershell
+psql -U postgres
+CREATE USER viewred WITH PASSWORD 'viewred_dev_only';
+CREATE DATABASE viewred OWNER viewred;
+\q
+```
+
+> **Nota**: Sin Docker no vas a tener TimescaleDB (a menos que lo
+> instales aparte). Para desarrollo básico PostgreSQL solo alcanza —
+> las features de TimescaleDB no son críticas.
 
 ---
 
@@ -423,15 +462,15 @@ if ($process) { Stop-Process -Id $process.OwningProcess -Force }
  3. Node.js 24 LTS               winget install OpenJS.NodeJS.LTS
  4. MinGW-w64 (para CGO)         winget install MSYS2.MSYS2
                                     → pacman -S mingw-w64-x86_64-gcc
- 5. Clonar repo                  git clone <url>
- 6. ONNX Runtime DLL             Descargar de GitHub Releases
-                                    → copiar a raíz del proyecto
- 7. Ollama + qwen2.5:3b          winget install Ollama.Ollama
-                                    → ollama pull qwen2.5:3b
- 8. PostgreSQL 16                winget install PostgreSQL.PostgreSQL.16
-                                    → crear DB viewred
- 9. Npcap (opcional)             Descargar de npcap.com
-10. npm install                  cd web && npm install
+  5. Clonar repo                  git clone <url>
+  6. Docker Desktop               winget install Docker.DockerDesktop
+                                     → reiniciar, docker compose up -d
+  7. ONNX Runtime DLL             Descargar de GitHub Releases
+                                     → copiar a raíz del proyecto
+  8. Ollama + qwen2.5:3b          winget install Ollama.Ollama
+                                     → ollama pull qwen2.5:3b
+  9. Npcap (opcional)             Descargar de npcap.com
+ 10. npm install                  cd web && npm install
 ```
 
 **Tiempo estimado total**: 45-90 minutos dependiendo de velocidad de internet.
