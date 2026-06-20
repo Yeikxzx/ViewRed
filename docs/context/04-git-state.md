@@ -21,35 +21,27 @@ bf8a3c4 refactor(api): remove unused VulnerabilitiesHandler struct
 8d735b6 fix(eval): prevent goroutine leak in evalPackets and optimize Suricata rules port parsing
 ```
 
-## Cambios sin commitear (del otro agente)
-
-Quedan **28 archivos modificados** del otro agente sin commitear:
+## Commits locales (8 fixes + 5 features + 1 docs = 14 commits desde main)
 
 ```
-cmd/viewred/main_wire.go
-go.mod / go.sum
-internal/api/handlers/packets.go, sse.go, stubs.go, stubs_test.go
-internal/api/router.go
-internal/config/config.go, config_test.go
-internal/storage/migrate.go, querier.go, queries.go, queries_test.go
-web/package-lock.json, package.json
-web/src/App.test.tsx, App.tsx
-web/src/components/ConfiguracionView.tsx, DashboardView.*, FiltrosView.tsx, TopologiaView.tsx, VulnerabilidadesView.tsx
-web/src/lib/llm.test.ts, llm.ts
-web/src/test-setup.ts
+90cd7b5 feat(cmd): point ML engine to models directory for ONNX model loading
+73de228 feat(scanner): add nmap-based vulnerability scanning engine
+34ff4c4 feat(cmd): update SSE event name and add default rules config
+aaa7fcd feat(web): wire dashboard to real API, add chat streaming, toast notifications
+7ac9899 feat(api): add LLM chat, rules CRUD, alerts handlers and update router
+a521d71 feat(storage): add port/payload_search packet filters, migrations, and new query methods
+b7ba0a0 docs(context): add complete project context dump for disaster recovery
+d4be4fc feat(ml): expand feature vector to 7 dimensions with sliding window stats
+de67698 fix(ml): restore engine_stub.go for non-CGO builds and add cgo build tag
+bf8a3c4 refactor(api): remove unused VulnerabilitiesHandler struct
+03ca531 fix(discovery): add 30s timeout to OUI database HTTP download
+402fe33 fix(cmd): guard store.GetCustomRules against nil when DB unavailable
+8a4e157 feat(topology): implement plan 5 discovery engine and UI
+8d735b6 fix(eval): prevent goroutine leak in evalPackets and optimize Suricata rules port parsing
 ```
 
-**Archivos untracked** (nuevos):
+## Queda sin trackear (ignorado por .gitignore o generado)
 ```
-fix_tests.py
-internal/api/handlers/llm_chat.go, rules_config.go
-internal/config/default.rules
-internal/scanner/
-internal/storage/migrations/0002_*, 0003_*
-internal/storage/queries_chat.go, queries_rules.go, queries_vulnerabilities.go
-models/ (isolation_forest.onnx, random_forest.onnx)
-onnxruntime.dll
-scripts/build.ps1, train_models.py
-list_interfaces.go, oui.txt
-web/src/lib/api.ts
+onnxruntime.dll   — binario ONNX Runtime (11MB, ignorado por .gitignore)
+oui.txt           — OUI database descargada en runtime (ignorado por .gitignore)
 ```

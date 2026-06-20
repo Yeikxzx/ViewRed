@@ -51,3 +51,11 @@ web/node_modules/
 # SDD review packages (large, regenerated each task)
 docs/superpowers/progress/review-*.diff
 docs/superpowers/progress/review-*.md
+
+# ONNX Runtime binary (download separately, large binary)
+onnxruntime.dll
+onnxruntime.so
+onnxruntime.dylib
+
+# OUI database (downloaded on first run)
+oui.txt
