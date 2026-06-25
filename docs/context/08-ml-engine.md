@@ -151,6 +151,37 @@ Las clases con más muestras (DDoS, Recon) tienen precisión excelente (>95%). B
 
 La tasa de paquetes es la feature más discriminante para clasificar ataques — consistente con ataques de red donde el volumen es la señal principal.
 
+### Decisión: CSV time-window vs PCAPs raw
+
+El dataset ofrece dos formatos: `processed_files/` (CSV con features por ventana de tiempo) y `raw_files/` (PCAPs + JSONs). Se eligió el enfoque CSV por las siguientes razones:
+
+#### Estimación de raw_files (PCAPs)
+
+Categoría | Paquetes | PCAP estimado | .tar.xz estimado
+----------|----------|--------------|-----------------
+Bruteforce | 126K | 45 MB | **21 MB**
+Web | 590K | ~210 MB | ~100 MB
+Malware | 1.47M | ~525 MB | ~245 MB
+Recon | 15.8M | ~5.6 GB | ~2.6 GB
+MITM | 125.7M | ~25 GB | ~12 GB
+DoS | 537.5M | ~107 GB | ~50 GB
+DDoS | 1.14B | ~74 GB | ~35 GB
+**Total** | **~1.8B** | **~212 GB** | **~100 GB**
+
+> Referencia: bruteforce.tar.xz pesa 21 MB comprimido y contiene ~60 MB sin comprimir (PCAPs + JSONs de 8 dispositivos, 31 minutos de tráfico). El resto de las categorías se estimaron por proporción de paquetes.
+
+#### Justificación
+
+| Factor | CSV time-window (elegido) | PCAPs raw (descartado por ahora) |
+|--------|--------------------------|----------------------------------|
+| Descarga | **294 MB** (un archivo) | **~40-100 GB** estimado |
+| Procesamiento | **Directo** (pandas) | Requiere scapy/tshark + extraer features |
+| Features | Pre-calculadas (84 cols) | Hay que calcular cada feature manualmente |
+| Precisión | **91.27%** en test | Potencialmente mayor (packet-level) |
+| Tiempo total | **~30 min** (descarga + training) | **~3-4 horas** estimado |
+
+Para un MVP, los CSV time-window ofrecen el mejor balance entre esfuerzo y calidad. Los PCAPs quedan como mejora futura si la precisión en producción no es suficiente.
+
 ### Limitaciones Conocidas
 
 1. **Skew training/inference**: el modelo se entrenó con promedios por ventana de 5s (time-window), pero en producción recibe datos packet-by-packet con sliding window de 60s. Los patrones generales se mantienen, pero la precisión en producción puede ser menor que el 91% reportado.
