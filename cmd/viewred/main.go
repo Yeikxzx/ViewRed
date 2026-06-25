@@ -223,8 +223,14 @@ func main() {
 		_ = rulesEngine.AddRule(`alert tcp any any -> any 23 (msg:"Insecure Telnet Traffic"; severity:CRITICAL;)`)
 	}
 
-	// Initialize ML Engine (Placeholder logic for V1)
-	mlEngine, err := ml.NewEngine("", "models")
+	// Initialize ML Engine.
+	// Pass the project's onnxruntime.dll explicitly to avoid loading
+	// an older system-wide version from C:\WINDOWS\system32\.
+	mlDLL := "onnxruntime.dll"
+	if _, statErr := os.Stat(mlDLL); statErr != nil {
+		mlDLL = "" // let the runtime search PATH
+	}
+	mlEngine, err := ml.NewEngine(mlDLL, "models")
 	if err != nil {
 		log.Printf("ml engine init failed: %v", err)
 	} else {
