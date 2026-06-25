@@ -58,6 +58,7 @@ type RouterDeps struct {
 	Querier    storage.Querier
 	Broker     *sse.Broker
 	Config     *config.Config
+	Capture    *handlers.CaptureHandle
 	CORSConfig middleware.CORSConfig
 }
 
@@ -110,10 +111,12 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 		v1.GET("/interfaces", handlers.GetInterfaces)
 		
 		captureConfigDeps := handlers.CaptureConfigDeps{
-			Config: deps.Config,
+			Config:  deps.Config,
+			Capture: deps.Capture,
 		}
 		v1.GET("/capture/config", handlers.GetCaptureConfig(captureConfigDeps))
 		v1.POST("/capture/config", handlers.UpdateCaptureConfig(captureConfigDeps))
+		v1.POST("/capture/restart", handlers.RestartCapture(captureConfigDeps))
 
 		v1.POST("/chat", handlers.LLMChatHandler(deps.Querier))
 		v1.GET("/chat/history/:conversation_id", handlers.GetChatHistoryHandler(deps.Querier))

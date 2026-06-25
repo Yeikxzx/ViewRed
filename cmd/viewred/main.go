@@ -31,6 +31,7 @@ import (
 	"github.com/viewred/viewred/internal/config"
 	"github.com/viewred/viewred/internal/discovery"
 	"github.com/viewred/viewred/internal/health"
+	"github.com/viewred/viewred/internal/api/handlers"
 	"github.com/viewred/viewred/internal/ml"
 	"github.com/viewred/viewred/internal/rules"
 	"github.com/viewred/viewred/internal/shutdown"
@@ -219,7 +220,15 @@ func main() {
 	} else {
 		querier = &storage.ErrorQuerier{Err: errors.New("storage unavailable")}
 	}
-	wire := newWireUp(&cfg, rg, querier)
+	captureHandle := &handlers.CaptureHandle{
+		Capturer:    cap,
+		Packets:     packets,
+		EvalPackets: evalPackets,
+	}
+	wire := newWireUp(&cfg, rg, querier, captureHandle)
+	// Set broker after wire creation to break the circular dependency:
+	// captureHandle → broker ← wire → captureHandle → RouterDeps.
+	captureHandle.Broker = wire.Broker
 
 	// Start ML and Rules evaluation worker
 	// Initialize Rules Engine

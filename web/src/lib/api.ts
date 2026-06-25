@@ -77,6 +77,14 @@ export async function getCaptureConfig(): Promise<CaptureConfig> {
   return res.json();
 }
 
+export async function restartCapture(): Promise<void> {
+  const res = await fetch('/api/v1/capture/restart', { method: 'POST' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to restart capture');
+  }
+}
+
 export async function updateCaptureConfig(config: CaptureConfig): Promise<CaptureConfig> {
   const res = await fetch('/api/v1/capture/config', {
     method: 'POST',

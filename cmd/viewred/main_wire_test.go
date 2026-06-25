@@ -21,7 +21,7 @@ import (
 // fully populated wireUp: broker, querier, and router must all be
 // non-nil so main.go can use them without nil checks.
 func TestNewWireUp_ReturnsNonNilParts(t *testing.T) {
-	w := newWireUp(&config.Config{}, health.New(), &storage.MockQuerier{})
+	w := newWireUp(&config.Config{}, health.New(), &storage.MockQuerier{}, nil)
 
 	require.NotNil(t, w.Broker, "broker must be created")
 	require.NotNil(t, w.Querier, "querier must be stored")
@@ -34,7 +34,7 @@ func TestNewWireUp_ReturnsNonNilParts(t *testing.T) {
 // and have every handler see the 503-mappable error.
 func TestNewWireUp_ExposesProvidedQuerier(t *testing.T) {
 	q := &storage.MockQuerier{}
-	w := newWireUp(&config.Config{}, health.New(), q)
+	w := newWireUp(&config.Config{}, health.New(), q, nil)
 
 	assert.Same(t, q, w.Querier, "wireUp must expose the same querier the caller passed")
 }
@@ -48,7 +48,7 @@ func TestNewWireUp_PassesHealthRegistryToRouter(t *testing.T) {
 	rg := health.New()
 	rg.Add("wire-test-subsystem", func(ctx context.Context) error { return nil })
 
-	w := newWireUp(&config.Config{}, rg, &storage.MockQuerier{})
+	w := newWireUp(&config.Config{}, rg, &storage.MockQuerier{}, nil)
 
 	server := httptest.NewServer(w.Router)
 	defer server.Close()
@@ -69,7 +69,7 @@ func TestNewWireUp_PassesHealthRegistryToRouter(t *testing.T) {
 // Uses httptest.NewServer because the handler blocks in c.Stream;
 // httptest.NewRecorder would deadlock.
 func TestNewWireUp_RouterHasSSEStream(t *testing.T) {
-	w := newWireUp(&config.Config{}, health.New(), &storage.MockQuerier{})
+	w := newWireUp(&config.Config{}, health.New(), &storage.MockQuerier{}, nil)
 
 	server := httptest.NewServer(w.Router)
 	defer server.Close()
@@ -93,7 +93,7 @@ func TestNewWireUp_RouterHasSSEStream(t *testing.T) {
 // 503 responses. This is the contract that lets main.go skip nil
 // checks on the store pointer.
 func TestNewWireUp_StorageRoutesReturn503OnErrorQuerier(t *testing.T) {
-	w := newWireUp(&config.Config{}, health.New(), &storage.ErrorQuerier{Err: errWireUpStorageDown})
+	w := newWireUp(&config.Config{}, health.New(), &storage.ErrorQuerier{Err: errWireUpStorageDown}, nil)
 
 	storageRoutes := []string{
 		"/api/v1/dashboard/summary",
@@ -142,7 +142,7 @@ func TestStart_MetricsTickerBroadcastsOnBroker(t *testing.T) {
 		},
 	}
 
-	w := newWireUpWithInterval(&config.Config{}, health.New(), q, 10*time.Millisecond)
+	w := newWireUpWithInterval(&config.Config{}, health.New(), q, 10*time.Millisecond, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	stop := w.Start(ctx)
@@ -184,7 +184,7 @@ func TestStart_MetricsTickerBroadcastsOnBroker(t *testing.T) {
 // shutdown" — without it, a cancel race in main.go would silently
 // leak a metrics goroutine per restart.
 func TestStart_MetricsTickerStopsOnContextCancel(t *testing.T) {
-	w := newWireUpWithInterval(&config.Config{}, health.New(), &storage.MockQuerier{}, 10*time.Millisecond)
+	w := newWireUpWithInterval(&config.Config{}, health.New(), &storage.MockQuerier{}, 10*time.Millisecond, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	stop := w.Start(ctx)
@@ -228,7 +228,7 @@ func TestStart_QuerierErrorSilentlyDropsTick(t *testing.T) {
 		},
 	}
 
-	w := newWireUpWithInterval(&config.Config{}, health.New(), q, 10*time.Millisecond)
+	w := newWireUpWithInterval(&config.Config{}, health.New(), q, 10*time.Millisecond, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	stop := w.Start(ctx)

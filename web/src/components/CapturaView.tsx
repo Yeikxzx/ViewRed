@@ -25,7 +25,7 @@ import {
 import { storageHistory } from '../data/mockData';
 import { useSSEStore, type CaptureStatus } from '../store/sse-store';
 import { deriveCapturaViewState } from '../lib/view-state';
-import { getInterfaces, getCaptureConfig, updateCaptureConfig, NetworkInterface } from '../lib/api';
+import { getInterfaces, getCaptureConfig, updateCaptureConfig, restartCapture, NetworkInterface } from '../lib/api';
 import { toast } from 'sonner';
 
 interface CapturaViewProps {
@@ -212,8 +212,11 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
         bpf: bpfFilter,
         snaplen: snaplen,
       });
+      // Restart capture with the new interface so the change takes effect
+      // immediately without requiring a full backend restart.
+      await restartCapture();
       setShowAppliedToast(true);
-      setTimeout(() => setShowAppliedToast(false), 5000); // Wait longer to show the restart message
+      setTimeout(() => setShowAppliedToast(false), 3000);
     } catch (err) {
       toast.error("Error al guardar la configuración");
     } finally {
@@ -605,9 +608,8 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
         <div className="fixed bottom-6 right-6 z-50 bg-[#10b981] text-white px-4 py-2.5 rounded shadow-xl shadow-black/60 font-sans text-xs flex flex-col gap-1 animate-bounce">
           <div className="flex items-center gap-2 font-semibold">
             <Check className="h-4 w-4" />
-            <span>Configuración de Captura y BPF guardada.</span>
+            <span>Configuración aplicada. Captura reiniciada con la nueva interfaz.</span>
           </div>
-          <span className="text-[10px] opacity-90 pl-6">Requiere reiniciar el backend para aplicar la interfaz.</span>
         </div>
       )}
     </div>

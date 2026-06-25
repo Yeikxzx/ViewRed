@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/viewred/viewred/internal/api"
+	"github.com/viewred/viewred/internal/api/handlers"
 	"github.com/viewred/viewred/internal/api/middleware"
 	"github.com/viewred/viewred/internal/config"
 	"github.com/viewred/viewred/internal/health"
@@ -92,21 +93,22 @@ const (
 // ticker. main.go is responsible for picking the concrete Querier
 // (real *Storage or *storage.ErrorQuerier) before calling newWireUp,
 // keeping the wireUp itself dependency-light and unit-testable.
-func newWireUp(cfg *config.Config, rg *health.Registry, querier storage.Querier) *wireUp {
-	return newWireUpWithInterval(cfg, rg, querier, defaultMetricsInterval)
+func newWireUp(cfg *config.Config, rg *health.Registry, querier storage.Querier, capture *handlers.CaptureHandle) *wireUp {
+	return newWireUpWithInterval(cfg, rg, querier, defaultMetricsInterval, capture)
 }
 
 // newWireUpWithInterval is the test-friendly form of newWireUp. The
 // production path goes through newWireUp, which uses the 1 Hz
 // default; tests inject a sub-second cadence so the metrics ticker
 // fires at least once before the test budget elapses.
-func newWireUpWithInterval(cfg *config.Config, rg *health.Registry, querier storage.Querier, interval time.Duration) *wireUp {
+func newWireUpWithInterval(cfg *config.Config, rg *health.Registry, querier storage.Querier, interval time.Duration, capture *handlers.CaptureHandle) *wireUp {
 	broker := sse.NewBroker()
 	router := api.NewRouterWithDeps(api.RouterDeps{
 		Health:  rg,
 		Querier: querier,
 		Broker:  broker,
 		Config:  cfg,
+		Capture: capture,
 		// Wire CORS from config so the React UI (running on
 		// Vite at http://localhost:5173 by default) can
 		// reach the API. Without this field the router
