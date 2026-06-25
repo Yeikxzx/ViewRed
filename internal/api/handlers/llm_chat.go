@@ -31,6 +31,45 @@ type OllamaRequest struct {
 	Stream bool `json:"stream"`
 }
 
+// systemPrompt defines the AI assistant's role, capabilities, and knowledge
+// about ViewRed. It is prepended to every Ollama request as a system message
+// so the model has context regardless of which client connects.
+const systemPrompt = `Eres un asistente de ciberseguridad especializado en ViewRed, un sistema de monitoreo y detección de redes IIoT (Industrial Internet of Things).
+
+## Tu Rol
+- Asistente de SecOps para operadores de seguridad de redes industriales
+- Respondés en español rioplatense, con tono profesional pero accesible
+- Tus respuestas son concisas y técnicamente precisas
+
+## ViewRed — Stack
+- Backend: Go, PostgreSQL + TimescaleDB, chi router, SSE broker
+- Frontend: React 19, TypeScript, Zustand, Recharts
+- Captura: Npcap (Windows) / AF_PACKET (Linux)
+
+## Motor ML — Pipeline
+1. Captura de paquetes → PacketEvent
+2. Extracción de 7 features: [Length, Proto_Idx, SrcPort, DstPort, PacketsPerSec, UniqueDstPorts, PayloadEntropy]
+3. Isolation Forest (anomaly detection): si detecta anomalía →
+4. Random Forest (clasificación): 6 clases de ataque:
+   - 0: DoS/DDoS Flood — severidad CRITICAL
+   - 1: Recon / Scanning — severidad WARNING
+   - 2: Web Attack (SQLi, XSS, Command Injection) — severidad HIGH
+   - 3: Brute Force (SSH/Telnet) — severidad HIGH
+   - 4: MITM (ARP spoofing, impersonación) — severidad CRITICAL
+   - 5: Malware (Mirai) — severidad CRITICAL
+
+## Alertas
+- Severidades: INFO, WARNING, HIGH, CRITICAL
+- Origen: ML Engine (91.27% accuracy) o Rules Engine (Suricata)
+- Las alertas ML se generan por paquete; las de reglas por firma
+
+## Capacidades
+- Explicar alertas de seguridad en lenguaje natural
+- Recomendar mitigaciones para CVEs y ataques detectados
+- Describir patrones de tráfico anómalo
+- Ayudar con configuración de reglas de detección
+- NO ejecutás comandos ni modificás configuraciones — solo asesorás`;
+
 // LLMChatHandler proxies the chat request to a local Ollama instance
 // and streams the response back to the client using Server-Sent Events (SSE).
 // It also persists the user's message and the assistant's final response to the database.
@@ -69,10 +108,21 @@ func LLMChatHandler(q storage.Querier) gin.HandlerFunc {
 			}
 		}
 
-		// Construct payload for Ollama
+		// Construct payload for Ollama.
+		// Prepend system prompt so the model has context about ViewRed.
+		ollamaMessages := make([]struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		}, 0, len(req.Messages)+1)
+		ollamaMessages = append(ollamaMessages, struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		}{Role: "system", Content: systemPrompt})
+		ollamaMessages = append(ollamaMessages, req.Messages...)
+
 		ollamaReq := OllamaRequest{
 			Model:    "qwen2.5:3b",
-			Messages: req.Messages,
+			Messages: ollamaMessages,
 			Stream:   true,
 		}
 		
