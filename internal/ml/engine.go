@@ -152,20 +152,29 @@ func (e *Engine) Evaluate(pkt capture.PacketEvent) (*storage.Alert, error) {
 
 	switch classLabel {
 	case 0:
-		category = "Unusual Web Traffic"
-		descriptionStr += " Random Forest classified as web traffic with abnormal characteristics."
-	case 1:
-		category = "DNS Anomaly"
-		descriptionStr += " Possible DNS tunnel or unusually large query."
-		severity = "HIGH"
-	case 2:
-		category = "Suspicious Port Traffic"
-		descriptionStr += " Communication to a non-standard high port detected by RF."
+		category = "DoS/DDoS Flood"
+		descriptionStr += " Possible DoS/DDoS flood attack detected."
 		severity = "CRITICAL"
-	case 3:
-		category = "ICMP Anomaly"
-		descriptionStr += " Anomalous ICMP/ping pattern (possible sweep)."
+	case 1:
+		category = "Recon / Scanning"
+		descriptionStr += " Possible reconnaissance or port scanning activity."
+		severity = "WARNING"
+	case 2:
+		category = "Web Attack"
+		descriptionStr += " Possible web attack (SQLi, XSS, Command Injection)."
 		severity = "HIGH"
+	case 3:
+		category = "Brute Force"
+		descriptionStr += " Possible brute force attack (SSH/Telnet)."
+		severity = "HIGH"
+	case 4:
+		category = "MITM"
+		descriptionStr += " Possible man-in-the-middle attack (ARP spoofing, impersonation)."
+		severity = "CRITICAL"
+	case 5:
+		category = "Malware (Mirai)"
+		descriptionStr += " Possible Mirai botnet activity detected."
+		severity = "CRITICAL"
 	}
 
 	alert := &storage.Alert{
