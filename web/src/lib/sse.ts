@@ -60,8 +60,11 @@ function errorMessage(err: unknown): string {
  *   (1s, 2s, 4s, 8s, 16s, 30s, 30s, ...).
  * - Cleans up the source and any pending timer on unmount.
  * - `reconnect()` closes the current source and retries immediately.
+ * - When `eventName` is provided, listens for that named SSE event type
+ *   instead of the default `message` event. Useful for streams like alerts
+ *   that emit named events (e.g. `event: alert`).
  */
-export function useSSE<T = unknown>(url: string): UseSSEResult<T> {
+export function useSSE<T = unknown>(url: string, eventName?: string): UseSSEResult<T> {
   const [lastEvent, setLastEvent] = useState<T | null>(null);
   const [connectionStatus, setLocalStatus] = useState<ConnectionStatus>('connecting');
   const [error, setError] = useState<string | null>(null);
@@ -102,12 +105,18 @@ export function useSSE<T = unknown>(url: string): UseSSEResult<T> {
       syncStatus('connected');
     });
 
-    source.addEventListener('message', (event) => {
+    const handleEvent = (event: Event) => {
       if (closedRef.current) return;
       const payload = parsePayload((event as MessageEvent).data);
       setLastEvent(payload as T);
       useSSEStore.getState().addMessage(url, payload);
-    });
+    };
+
+    if (eventName) {
+      source.addEventListener(eventName, handleEvent);
+    } else {
+      source.addEventListener('message', handleEvent);
+    }
 
     source.addEventListener('error', (event) => {
       if (closedRef.current) return;

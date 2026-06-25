@@ -90,11 +90,13 @@ func main() {
 	// Initialize capture
 	iface := os.Getenv("VIEWRED_INTERFACE")
 	cap := capture.NewCaptureForOS()
+	var captureRunning bool
 	packets := make(chan capture.PacketEvent, 4096)
 	evalPackets := make(chan capture.PacketEvent, 4096)
 	if err := cap.Start(iface, ""); err != nil {
 		log.Printf("capture start failed: %v", err)
 	} else {
+		captureRunning = true
 		// Defer is the panic-safety net.
 		defer cap.Stop()
 		// Bridge cap.Packets() → packets channel. We use a non-blocking
@@ -301,6 +303,21 @@ func main() {
 	// goroutines have exited, so it is safe to call in the
 	// shutdown defer below.
 	stopWire := wire.Start(ctx)
+
+	// Broadcast initial capture status to the frontend.
+	// This runs after the broker is started so the event is buffered
+	// and delivered to any connecting SSE client.
+	captureStatus := "paused"
+	if captureRunning {
+		captureStatus = "running"
+	}
+	if statusJSON, err := json.Marshal(map[string]string{"status": captureStatus}); err == nil {
+		wire.Broker.Broadcast(sse.Event{
+			Name:  "capture-status",
+			Topic: "capture-status",
+			Data:  statusJSON,
+		})
+	}
 
 	// Cleanup defer for the wire-up. Order matters:
 	//   1. cancel() — signal the metrics ticker and broker Run

@@ -124,6 +124,10 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 			Broker: deps.Broker,
 			Topic:  "llm",
 		}))
+		v1.GET("/stream/capture-status", handlers.StreamStubHandler(handlers.StreamStubHandlerDeps{
+			Broker: deps.Broker,
+			Topic:  "capture-status",
+		}))
 	}
 
 	return r

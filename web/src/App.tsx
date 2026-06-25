@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
@@ -16,6 +16,8 @@ import { Toaster, toast } from 'sonner';
 import { ViewType, NetworkAlert, Vulnerability, ChatMessage } from './types';
 import { llm, type Message } from './lib/llm';
 import { getRecentAlerts, acknowledgeAlert, AlertBackend } from './lib/api';
+import { useSSE } from './lib/sse';
+import { useSSEStore } from './store/sse-store';
 import {
   initialDevices,
 } from './data/mockData';
@@ -39,45 +41,58 @@ export default function App() {
   const [selectedDeviceIP, setSelectedDeviceIP] = useState<string>('');
   const [selectedAlertToExplain, setSelectedAlertToExplain] = useState<NetworkAlert | null>(null);
 
+  // Callback to process an alert from SSE
+  const handleAlertEvent = useCallback((payload: unknown) => {
+    try {
+      const a: AlertBackend = payload as AlertBackend;
+      const newAlert: NetworkAlert = {
+        id: String(a.id),
+        timestamp: a.time,
+        severity: (a.severity?.toUpperCase() === 'CRITICAL' || a.severity?.toUpperCase() === 'WARNING') 
+          ? (a.severity.toUpperCase() as 'CRITICAL' | 'WARNING') 
+          : 'INFO',
+        title: a.title,
+        description: a.description || '',
+        source: a.source,
+        destination: 'Desconocido',
+        confidence: a.score,
+        origin: 'Detección Local',
+        timeAgo: 'Hace un momento',
+        acknowledged: !!a.acknowledged_at,
+      };
+      setAlerts((prev) => [newAlert, ...prev]);
+
+      // Trigger toast notification
+      if (newAlert.severity === 'CRITICAL') {
+        toast.error(newAlert.title, { description: newAlert.source });
+      } else if (newAlert.severity === 'WARNING') {
+        toast.warning(newAlert.title, { description: newAlert.source });
+      } else {
+        toast.info(newAlert.title, { description: newAlert.source });
+      }
+    } catch (err) {
+      console.error('Error parsing alert SSE', err);
+    }
+  }, []);
+
+  // SSE alerts with automatic exponential backoff via useSSE hook
+  const { lastEvent: alertEvent } = useSSE<AlertBackend>('/api/v1/stream/alerts', 'alert');
+  useEffect(() => {
+    if (alertEvent) handleAlertEvent(alertEvent);
+  }, [alertEvent, handleAlertEvent]);
+
+  // Listen for capture-status events to update the store
+  const { lastEvent: captureStatusEvent } = useSSE<{ status: string }>('/api/v1/stream/capture-status', 'capture-status');
+  useEffect(() => {
+    if (captureStatusEvent?.status) {
+      useSSEStore.getState().setCaptureStatus(captureStatusEvent.status as 'running' | 'paused' | 'unknown');
+    }
+  }, [captureStatusEvent]);
+
   // Fetch initial alerts and vulnerabilities
   useEffect(() => {
     getRecentAlerts(100).then(setAlerts).catch(console.error);
     fetchVulnerabilities();
-
-    const es = new EventSource('/api/v1/stream/alerts');
-    es.addEventListener('alert', (e) => {
-      try {
-        const a: AlertBackend = JSON.parse(e.data);
-        const newAlert: NetworkAlert = {
-          id: String(a.id),
-          timestamp: a.time,
-          severity: (a.severity.toUpperCase() === 'CRITICAL' || a.severity.toUpperCase() === 'WARNING') 
-            ? (a.severity.toUpperCase() as 'CRITICAL' | 'WARNING') 
-            : 'INFO',
-          title: a.title,
-          description: a.description || '',
-          source: a.source,
-          destination: 'Desconocido',
-          confidence: a.score,
-          origin: 'Detección Local',
-          timeAgo: 'Hace un momento',
-          acknowledged: !!a.acknowledged_at,
-        };
-        setAlerts((prev) => [newAlert, ...prev]);
-
-        // Trigger toast notification
-        if (newAlert.severity === 'CRITICAL') {
-          toast.error(newAlert.title, { description: newAlert.source });
-        } else if (newAlert.severity === 'WARNING') {
-          toast.warning(newAlert.title, { description: newAlert.source });
-        } else {
-          toast.info(newAlert.title, { description: newAlert.source });
-        }
-      } catch (err) {
-        console.error('Error parsing alert SSE', err);
-      }
-    });
-    return () => es.close();
   }, []);
 
   // Chat conversation logs state
