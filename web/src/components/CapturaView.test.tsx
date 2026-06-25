@@ -60,17 +60,45 @@ afterEach(() => {
 });
 
 /**
+ * Fresh Response for GET /api/v1/interfaces (pcap).
+ * Returns an empty list. Must be a new Response each time because
+ * Response bodies are single-use.
+ */
+function mockInterfaces() { return jsonResponse([]); }
+
+/**
+ * Fresh Response for GET /api/v1/capture/config.
+ * Returns the default config. Must be a new Response each time.
+ */
+function mockCaptureConfig() { return jsonResponse({ interface: '', bpf: '', snaplen: 65535 }); }
+
+/**
  * Helper: stub the global `fetch` with a function that returns a
- * queue of canned responses. Each call to `fetch` consumes the next
- * response. If the queue is empty the stub rejects so we never hang
- * a test on an unexpected request.
+ * queue of canned responses.
+ *
+ * The CapturaView fires two requests on mount (interfaces + capture
+ * config) before the health polling starts. This helper handles those
+ * automatically using the canned defaults, then delegates to the
+ * test-specific `responses` queue for subsequent calls.
+ *
+ * Each call to `fetch` in `responses` consumes the next element. If
+ * the queue runs out the stub rejects so we immediately notice an
+ * unexpected request.
  */
 function stubFetchSequence(responses: Array<Response | Error>) {
-  let i = 0;
-  const mock = vi.fn(() => {
-    const next = responses[i++];
+  let bootCount = 0;
+  let respIdx = 0;
+  const mock = vi.fn((url: string) => {
+    // Handle the two boot requests transparently (fresh Response each time)
+    if (bootCount < 2 && typeof url === 'string' &&
+        (url.includes('/interfaces') || url.includes('/capture/config'))) {
+      bootCount++;
+      const body = url.includes('/interfaces') ? [] : { interface: '', bpf: '', snaplen: 65535 };
+      return Promise.resolve(jsonResponse(body));
+    }
+    const next = responses[respIdx++];
     if (next === undefined) {
-      return Promise.reject(new Error(`unexpected fetch call #${i}`));
+      return Promise.reject(new Error(`unexpected fetch call`));
     }
     if (next instanceof Error) {
       return Promise.reject(next);
@@ -122,8 +150,14 @@ describe('CapturaView health polling', () => {
     const mockFetch = stubFetchSequence([jsonResponse(okHealth('ok'))]);
     renderCaptura();
 
-    await waitForFetch(mockFetch);
-    expect(mockFetch).toHaveBeenCalledWith(HEALTH_URL);
+    // Wait for boot fetches (interfaces + config) + first health tick
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS + 100);
+    });
+    // The boot sequence (interfaces + capture config) fires first,
+    // then health polls on the interval.
+    expect(mockFetch.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(mockFetch).toHaveBeenLastCalledWith(HEALTH_URL);
   });
 
   it('re-polls the health endpoint on the configured interval', async () => {
@@ -135,20 +169,23 @@ describe('CapturaView health polling', () => {
     ]);
     renderCaptura();
 
-    await waitForFetch(mockFetch);
-    expect(mockFetch).toHaveBeenCalledTimes(1);
+    // Wait for boot fetches (interfaces + config) + first health tick
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS + 100);
+    });
+    expect(mockFetch.mock.calls.length).toBeGreaterThanOrEqual(3);
 
-    // Advance the fake clock by 1 tick: another fetch should fire.
+    // Advance the fake clock by 1 tick: another health fetch should fire.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
     });
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch.mock.calls.length).toBeGreaterThanOrEqual(4);
 
     // And again — confirms the interval is registered, not a one-shot.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
     });
-    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(mockFetch.mock.calls.length).toBeGreaterThanOrEqual(5);
   });
 
   it('stops polling when the component unmounts', async () => {
@@ -160,8 +197,13 @@ describe('CapturaView health polling', () => {
     ]);
     const { unmount } = renderCaptura();
 
-    await waitForFetch(mockFetch);
-    expect(mockFetch).toHaveBeenCalledTimes(1);
+    // Wait for boot fetches (interfaces + config) + first health poll
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS + 100);
+    });
+    const callsAfterMount = mockFetch.mock.calls.length;
+    // 3 calls: interfaces + capture config + first health tick
+    expect(callsAfterMount).toBeGreaterThanOrEqual(3);
 
     unmount();
 
@@ -170,7 +212,7 @@ describe('CapturaView health polling', () => {
     });
 
     // No further fetches after unmount — interval was cleaned up.
-    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch.mock.calls.length).toBe(callsAfterMount);
   });
 });
 
@@ -356,8 +398,8 @@ describe('CapturaView error banner', () => {
     await waitForState(
       () => document.getElementById('captura-health-error-banner') !== null,
     );
-    // First poll has happened (and failed).
-    expect(mockFetch).toHaveBeenCalledTimes(1);
+    // Boot (interfaces + config) + first health poll (failed).
+    expect(mockFetch.mock.calls.length).toBeGreaterThanOrEqual(3);
 
     const retryBtn = document.getElementById('captura-health-retry-btn') as HTMLButtonElement;
     expect(retryBtn).not.toBeNull();

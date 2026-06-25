@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach, vi, beforeEach } from 'vitest';
 import { render, cleanup } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { useSSEStore } from '../store/sse-store';
 import type { NetworkAlert } from '../types';
 import DashboardView from './DashboardView';
@@ -24,10 +25,12 @@ const noopReconnect = vi.fn();
 
 const renderDashboard = () =>
   render(
-    <DashboardView
-      setView={noopSetView}
-      setSelectedAlert={noopSetSelectedAlert}
-    />,
+    <MemoryRouter>
+      <DashboardView
+        setView={noopSetView}
+        setSelectedAlert={noopSetSelectedAlert}
+      />
+    </MemoryRouter>,
   );
 
 beforeEach(() => {

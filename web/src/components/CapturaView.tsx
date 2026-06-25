@@ -25,6 +25,8 @@ import {
 import { storageHistory } from '../data/mockData';
 import { useSSEStore, type CaptureStatus } from '../store/sse-store';
 import { deriveCapturaViewState } from '../lib/view-state';
+import { getInterfaces, getCaptureConfig, updateCaptureConfig, NetworkInterface } from '../lib/api';
+import { toast } from 'sonner';
 
 interface CapturaViewProps {
   isCapturing: boolean;
@@ -64,12 +66,42 @@ function deriveCaptureStatus(report: HealthReport | null): CaptureStatus {
 }
 
 export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewProps) {
-  const [selectedInterface, setSelectedInterface] = useState('eth0 (Activa)');
-  const [bpfFilter, setBpfFilter] = useState('tcp port 80 or tcp port 443');
+  const [interfaces, setInterfaces] = useState<NetworkInterface[]>([]);
+  const [selectedInterface, setSelectedInterface] = useState('');
+  const [bpfFilter, setBpfFilter] = useState('');
   const [snaplen, setSnaplen] = useState(65535);
   const [rotSize, setRotSize] = useState('500 MB');
   const [retention, setRetention] = useState('7 Días');
   const [showAppliedToast, setShowAppliedToast] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Fetch initial config and interfaces
+  useEffect(() => {
+    async function loadData() {
+      // Load interfaces independently — if pcap fails (no Npcap), the
+      // user can still see and change the saved config.
+      try {
+        const ifaces = await getInterfaces();
+        setInterfaces(ifaces);
+      } catch (err) {
+        console.error('Failed to load interfaces (pcap may be unavailable):', err);
+      }
+
+      // Load saved capture config separately so a pcap failure does
+      // not prevent the UI from restoring the user's saved interface.
+      try {
+        const config = await getCaptureConfig();
+        if (config) {
+          if (config.interface) setSelectedInterface(config.interface);
+          if (config.bpf) setBpfFilter(config.bpf);
+          if (config.snaplen) setSnaplen(config.snaplen);
+        }
+      } catch (err) {
+        console.error('Failed to load capture config:', err);
+      }
+    }
+    loadData();
+  }, []);
 
   // Health-polling state. `healthError` is the local "last poll
   // failed" flag that drives the error banner; it is intentionally
@@ -167,16 +199,26 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
     retry,
   });
 
-  const interfacesList = [
-    'eth0 (Activa)',
-    'eth1 (Desconectada)',
-    'wlan0 (Monitoreo)',
-    'lo (Loopback)',
-  ];
-
-  const handleApplyChanges = () => {
-    setShowAppliedToast(true);
-    setTimeout(() => setShowAppliedToast(false), 2500);
+  const handleApplyChanges = async () => {
+    if (isCapturing) {
+      toast.warning("No se puede aplicar mientras la captura está activa.");
+      return;
+    }
+    
+    setIsSaving(true);
+    try {
+      await updateCaptureConfig({
+        interface: selectedInterface,
+        bpf: bpfFilter,
+        snaplen: snaplen,
+      });
+      setShowAppliedToast(true);
+      setTimeout(() => setShowAppliedToast(false), 5000); // Wait longer to show the restart message
+    } catch (err) {
+      toast.error("Error al guardar la configuración");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleClearBuffer = () => {
@@ -451,9 +493,9 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
                 disabled={isCapturing}
                 className="w-full bg-[#0a0e14] border border-[#2a3242] rounded px-3 py-1.5 text-xs text-[#e4e7eb] outline-none font-mono py-1.5 disabled:opacity-60 cursor-pointer"
               >
-                {interfacesList.map((iface) => (
-                  <option key={iface} value={iface}>
-                    {iface}
+                {interfaces.map((iface) => (
+                  <option key={iface.name} value={iface.name}>
+                    {iface.name} {iface.description ? `(${iface.description})` : ''}
                   </option>
                 ))}
               </select>
@@ -497,9 +539,10 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
             {/* Save Buttons */}
             <button
               onClick={handleApplyChanges}
-              className="w-full bg-[#3b82f6] hover:bg-[#3b82f6]/95 text-white py-1.5 rounded text-xs font-mono font-bold flex items-center justify-center gap-2 transition-all cursor-pointer"
+              disabled={isSaving || isCapturing}
+              className="w-full bg-[#3b82f6] hover:bg-[#3b82f6]/95 disabled:opacity-50 text-white py-1.5 rounded text-xs font-mono font-bold flex items-center justify-center gap-2 transition-all cursor-pointer"
             >
-              <span>Aplicar Cambios</span>
+              <span>{isSaving ? "Guardando..." : "Aplicar Cambios"}</span>
             </button>
           </div>
 
@@ -559,9 +602,12 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
 
       {/* Applied toast popup */}
       {showAppliedToast && (
-        <div className="fixed bottom-6 right-6 z-50 bg-[#10b981] text-white px-4 py-2.5 rounded shadow-xl shadow-black/60 font-sans text-xs font-semibold flex items-center gap-2 animate-bounce">
-          <Check className="h-4 w-4" />
-          <span>Configuración de Captura y BPF guardada con éxito.</span>
+        <div className="fixed bottom-6 right-6 z-50 bg-[#10b981] text-white px-4 py-2.5 rounded shadow-xl shadow-black/60 font-sans text-xs flex flex-col gap-1 animate-bounce">
+          <div className="flex items-center gap-2 font-semibold">
+            <Check className="h-4 w-4" />
+            <span>Configuración de Captura y BPF guardada.</span>
+          </div>
+          <span className="text-[10px] opacity-90 pl-6">Requiere reiniciar el backend para aplicar la interfaz.</span>
         </div>
       )}
     </div>

@@ -107,6 +107,14 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 		v1.POST("/vulnerabilities/:id/mitigate", handlers.MitigateVulnerability(deps.Querier))
 		v1.POST("/scan", handlers.TriggerScan(deps.Querier))
 		v1.GET("/config", handlers.ConfigGet)
+		v1.GET("/interfaces", handlers.GetInterfaces)
+		
+		captureConfigDeps := handlers.CaptureConfigDeps{
+			Config: deps.Config,
+		}
+		v1.GET("/capture/config", handlers.GetCaptureConfig(captureConfigDeps))
+		v1.POST("/capture/config", handlers.UpdateCaptureConfig(captureConfigDeps))
+
 		v1.POST("/chat", handlers.LLMChatHandler(deps.Querier))
 		v1.GET("/chat/history/:conversation_id", handlers.GetChatHistoryHandler(deps.Querier))
 		v1.GET("/stream/metrics", handlers.StreamMetricsHandler(handlers.StreamMetricsHandlerDeps{

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Activity,
   Database,
@@ -70,6 +71,7 @@ export default function DashboardView({
   setView,
   setSelectedAlert,
 }: DashboardViewProps) {
+  const navigate = useNavigate();
   const [topTalkers, setTopTalkers] = useState<IPVolume[]>([]);
   const [protocols, setProtocols] = useState<{name: string, value: string, color: string}[]>([]);
   const [recentAlerts, setRecentAlerts] = useState<NetworkAlert[]>([]);
@@ -238,12 +240,17 @@ export default function DashboardView({
           trend: 'up',
           color: 'text-[#06b6d4]',
           icon: 'Database',
+          action: () => {
+            navigate('/topologia');
+            setView('topologia');
+          },
         },
       ]
     : null;
 
   const handleAlertInteraction = (alert: NetworkAlert) => {
     setSelectedAlert(alert);
+    navigate('/alertas');
     setView('alertas');
   };
 
@@ -303,7 +310,10 @@ export default function DashboardView({
           </p>
           <button
             type="button"
-            onClick={() => setView('captura')}
+            onClick={() => {
+              navigate('/captura');
+              setView('captura');
+            }}
             className="mt-4 font-mono text-xs font-semibold px-3 py-1.5 rounded border border-[#3b82f6]/40 text-[#3b82f6] hover:bg-[#3b82f6]/10 transition-colors"
           >
             Ir a Captura
@@ -341,7 +351,17 @@ export default function DashboardView({
                     <span className="font-sans text-xs text-[#9ba3b4] font-medium tracking-wide uppercase">
                       {kpi.title}
                     </span>
-                    <span className="text-[#5c6473] font-mono text-sm">[]</span>
+                    {kpi.action ? (
+                      <button
+                        onClick={kpi.action}
+                        className="text-[#3b82f6] hover:text-[#60a5fa] font-mono text-sm transition-colors cursor-pointer focus:outline-none"
+                        title="Ver detalles"
+                      >
+                        [↗]
+                      </button>
+                    ) : (
+                      <span className="text-[#5c6473] font-mono text-sm">[]</span>
+                    )}
                   </div>
                   <div className="mt-2.5 flex items-baseline gap-2.5">
                     <span className="font-sans font-bold text-[#e4e7eb] text-2xl tracking-tight">
@@ -546,7 +566,10 @@ export default function DashboardView({
               Top Talkers (IPs)
             </h2>
             <button
-              onClick={() => setView('filtros')}
+              onClick={() => {
+                navigate('/filtros');
+                setView('filtros');
+              }}
               className="text-[#3b82f6] hover:underline text-xs font-semibold flex items-center gap-1.5"
             >
               <span>Ver Todo</span>
@@ -595,7 +618,10 @@ export default function DashboardView({
               Alertas Recientes
             </h2>
             <button
-              onClick={() => setView('alertas')}
+              onClick={() => {
+                navigate('/alertas');
+                setView('alertas');
+              }}
               className="text-[#3b82f6] hover:underline text-xs font-semibold flex items-center gap-1"
             >
               <span>Gestionar</span>

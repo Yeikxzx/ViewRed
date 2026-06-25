@@ -42,6 +42,51 @@ export interface AlertsResponse {
 
 const API_BASE = '/api/v1';
 
+export interface ConfigBackend {
+  version: string;
+  features: string[];
+}
+
+export interface NetworkInterface {
+  name: string;
+  description: string;
+  addresses: string[];
+}
+
+export interface CaptureConfig {
+  interface: string;
+  bpf: string;
+  snaplen: number;
+}
+
+export async function getConfig(): Promise<ConfigBackend> {
+  const res = await fetch('/api/v1/config');
+  if (!res.ok) throw new Error('Failed to fetch config');
+  return res.json();
+}
+
+export async function getInterfaces(): Promise<NetworkInterface[]> {
+  const res = await fetch('/api/v1/interfaces');
+  if (!res.ok) throw new Error('Failed to fetch interfaces');
+  return res.json();
+}
+
+export async function getCaptureConfig(): Promise<CaptureConfig> {
+  const res = await fetch('/api/v1/capture/config');
+  if (!res.ok) throw new Error('Failed to fetch capture config');
+  return res.json();
+}
+
+export async function updateCaptureConfig(config: CaptureConfig): Promise<CaptureConfig> {
+  const res = await fetch('/api/v1/capture/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) throw new Error('Failed to update capture config');
+  return res.json();
+}
+
 export async function getTopTalkers(): Promise<TopTalkersResponse> {
   const res = await fetch(`${API_BASE}/dashboard/top-talkers`);
   if (!res.ok) throw new Error('Error fetching top talkers');

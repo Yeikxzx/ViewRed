@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$Version = "1.18.0"
+$Version = "1.20.0"
 $Url = "https://github.com/microsoft/onnxruntime/releases/download/v$Version/onnxruntime-win-x64-$Version.zip"
 $ZipPath = "$env:TEMP\onnxruntime.zip"
 $ExtractPath = "$env:TEMP\onnxruntime"

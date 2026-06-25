@@ -15,6 +15,7 @@ export interface KPI {
   trend: 'up' | 'down' | 'neutral';
   color: string;
   icon: string;
+  action?: () => void;
 }
 
 export interface IPVolume {

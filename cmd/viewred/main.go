@@ -36,6 +36,8 @@ import (
 	"github.com/viewred/viewred/internal/shutdown"
 	"github.com/viewred/viewred/internal/sse"
 	"github.com/viewred/viewred/internal/storage"
+
+	"github.com/google/gopacket/pcap"
 )
 
 // Version is the semantic version of this build, set via -ldflags at build time.
@@ -88,12 +90,30 @@ func main() {
 	}
 
 	// Initialize capture
-	iface := os.Getenv("VIEWRED_INTERFACE")
+	iface := cfg.Capture.Interface
+	if iface == "" {
+		iface = os.Getenv("VIEWRED_INTERFACE")
+	}
+	if iface == "" {
+		if devs, err := pcap.FindAllDevs(); err == nil && len(devs) > 0 {
+			// Find first non-loopback if possible, else just use the first one
+			iface = devs[0].Name
+			for _, d := range devs {
+				// Pick first interface with an IP address (often a real interface)
+				if len(d.Addresses) > 0 {
+					iface = d.Name
+					break
+				}
+			}
+			log.Printf("VIEWRED_INTERFACE not set, auto-selected interface: %s", iface)
+		}
+	}
 	cap := capture.NewCaptureForOS()
 	var captureRunning bool
 	packets := make(chan capture.PacketEvent, 4096)
 	evalPackets := make(chan capture.PacketEvent, 4096)
-	if err := cap.Start(iface, ""); err != nil {
+	bpfFilter := cfg.Capture.BPF
+	if err := cap.Start(iface, bpfFilter); err != nil {
 		log.Printf("capture start failed: %v", err)
 	} else {
 		captureRunning = true
@@ -227,6 +247,9 @@ func main() {
 	// Pass the project's onnxruntime.dll explicitly to avoid loading
 	// an older system-wide version from C:\WINDOWS\system32\.
 	mlDLL := "onnxruntime.dll"
+	if abs, err := filepath.Abs(mlDLL); err == nil {
+		mlDLL = abs
+	}
 	if _, statErr := os.Stat(mlDLL); statErr != nil {
 		mlDLL = "" // let the runtime search PATH
 	}

@@ -216,12 +216,12 @@ git log --oneline -5
 ### Descargar ONNX Runtime DLL
 
 ```powershell
-# Versión: 1.16.x (compatible con github.com/yalue/onnxruntime_go v1.16.0)
+# Versión: 1.18.x (compatible con github.com/yalue/onnxruntime_go v1.16.0 API v20)
 # CPU-only (no necesitamos CUDA para ViewRed)
 
 # Opción A: Descarga directa
 # 1. Ir a: https://github.com/microsoft/onnxruntime/releases
-# 2. Buscar "onnxruntime-win-x64-1.16.x.zip"
+# 2. Buscar "onnxruntime-win-x64-1.18.x.zip"
 # 3. Extraer y copiar onnxruntime.dll a C:\Users\<tu-user>\Desktop\Viewred\
 
 # Opción B: Con scripts (si existe)

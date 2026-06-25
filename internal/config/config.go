@@ -4,16 +4,25 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
 
 // Config is the top-level configuration.
 type Config struct {
+	SourcePath string         `yaml:"-"` // Not serialized
 	Server   ServerConfig   `yaml:"server"`
+	Capture  CaptureConfig  `yaml:"capture"`
 	AI       AIConfig       `yaml:"ai"`
 	Scanner  ScannerConfig  `yaml:"scanner"`
 	Database DatabaseConfig `yaml:"database"`
+}
+
+type CaptureConfig struct {
+	Interface string `yaml:"interface"`
+	BPF       string `yaml:"bpf"`
+	Snaplen   int    `yaml:"snaplen"`
 }
 
 type ServerConfig struct {
@@ -53,7 +62,12 @@ func defaults() Config {
 			// the CORS middleware entirely (see
 			// internal/api/router.go), which is the wrong
 			// default for a dev-friendly binary.
-			CORSOrigins: []string{"http://localhost:5173"},
+			CORSOrigins: []string{"http://localhost:5173", "http://127.0.0.1:3000"},
+		},
+		Capture: CaptureConfig{
+			Interface: "",
+			BPF:       "tcp port 80 or tcp port 443",
+			Snaplen:   65535,
 		},
 		AI: AIConfig{
 			OllamaURL:          "http://localhost:11434",
@@ -74,6 +88,7 @@ func defaults() Config {
 
 func Load(path string) (Config, error) {
 	cfg := defaults()
+	cfg.SourcePath = path
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -88,4 +103,25 @@ func Load(path string) (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// Save marshals the config to YAML and writes it to its SourcePath.
+func (c *Config) Save() error {
+	if c.SourcePath == "" {
+		return fmt.Errorf("cannot save: no SourcePath defined")
+	}
+	data, err := yaml.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	
+	// Create directory if it doesn't exist
+	if err := os.MkdirAll(filepath.Dir(c.SourcePath), 0755); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+
+	if err := os.WriteFile(c.SourcePath, data, 0644); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	return nil
 }
