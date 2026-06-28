@@ -62,6 +62,7 @@ oui.txt
 *.png
 *.svg
 designs/
+design.md
 
 # Playwright test artifacts
 .playwright-mcp/
