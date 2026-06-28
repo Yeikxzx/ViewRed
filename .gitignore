@@ -68,4 +68,4 @@ design.md
 .playwright-mcp/
 
 # SDD change artifacts (openspec)
-openspec/config.yaml
+openspec/
