@@ -10,12 +10,15 @@ import {
   SlidersHorizontal,
   X,
   Search,
+  Trash2,
 } from 'lucide-react';
 import { NetworkAlert, ViewType } from '../types';
 
 interface AlertasViewProps {
   alerts: NetworkAlert[];
   onAcknowledgeAlert: (id: string) => void;
+  onDeleteAlert: (id: string) => void;
+  onClearAlerts: () => void;
   setSelectedAlertToExplain: (alert: NetworkAlert | null) => void;
   setView: (view: ViewType) => void;
 }
@@ -23,6 +26,8 @@ interface AlertasViewProps {
 export default function AlertasView({
   alerts,
   onAcknowledgeAlert,
+  onDeleteAlert,
+  onClearAlerts,
   setSelectedAlertToExplain,
   setView,
 }: AlertasViewProps) {
@@ -216,6 +221,14 @@ export default function AlertasView({
             className="w-full bg-[#0a0e14] border border-[#2a3242] focus:border-[#3b82f6] rounded pl-9 pr-4 py-1.5 text-xs text-[#e4e7eb] outline-none font-mono"
           />
         </div>
+        <button
+          onClick={onClearAlerts}
+          className="px-3 py-1.5 bg-transparent hover:bg-red-500/10 text-[#ef4444] rounded text-xs font-mono flex items-center gap-1.5 border border-[#ef4444]/20 transition-all cursor-pointer"
+          title="Eliminar todas las alertas"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          <span>Limpiar Todo</span>
+        </button>
       </div>
 
       {/* Aler Stream List list */}
@@ -317,6 +330,14 @@ export default function AlertasView({
                     <span>Aceptar (Ack)</span>
                   </button>
                 )}
+                <button
+                  onClick={() => onDeleteAlert(alert.id)}
+                  className="px-3 py-1 bg-transparent hover:bg-red-500/10 text-[#ef4444] rounded text-xs font-mono flex items-center gap-1.5 border border-[#ef4444]/20 transition-all cursor-pointer"
+                  title="Eliminar alerta"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>Eliminar</span>
+                </button>
               </div>
             </div>
           ))

@@ -68,6 +68,7 @@ func (c *AFPacketCapture) Start(iface string, bpfFilter string) error {
 	c.filter = bpfFilter
 	c.handle = handle
 	c.stats.StartedAt = time.Now()
+	c.stats.LastError = nil // clear stale error from prior run
 	c.running = true
 
 	go c.readLoop()

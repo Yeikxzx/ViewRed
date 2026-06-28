@@ -4,13 +4,16 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/viewred/viewred/internal/api/handlers"
 	"github.com/viewred/viewred/internal/api/middleware"
 	"github.com/viewred/viewred/internal/config"
+	"github.com/viewred/viewred/internal/geoip"
 	"github.com/viewred/viewred/internal/health"
+	"github.com/viewred/viewred/internal/resolver"
 	"github.com/viewred/viewred/internal/sse"
 	"github.com/viewred/viewred/internal/storage"
 )
@@ -59,6 +62,12 @@ type RouterDeps struct {
 	Broker     *sse.Broker
 	Config     *config.Config
 	Capture    *handlers.CaptureHandle
+	GeoIP      *geoip.Service
+	// Resolver is the process-local DNS resolver. Optional — when
+	// nil, the packets handler omits the src_hostname/dst_hostname
+	// enrichment and tests that don't care about DNS stay
+	// unbloated. The production wire-up always sets this.
+	Resolver   *resolver.Resolver
 	CORSConfig middleware.CORSConfig
 }
 
@@ -99,16 +108,24 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 		v1.GET("/rules", handlers.GetRules(deps.Querier))
 		v1.POST("/rules", handlers.CreateRule(deps.Querier))
 		v1.DELETE("/rules/:id", handlers.DeleteRule(deps.Querier))
-		v1.GET("/packets", handlers.PacketsList(deps.Querier))
+		v1.GET("/packets", handlers.PacketsListWithResolver(deps.Querier, deps.Resolver))
 		v1.GET("/devices", handlers.DevicesList(deps.Querier))
 		v1.GET("/alerts", handlers.AlertsList(deps.Querier))
 		v1.POST("/alerts/:id/ack", handlers.AlertAcknowledge(deps.Querier))
+		v1.DELETE("/alerts/:id", handlers.AlertDelete(deps.Querier))
+		v1.DELETE("/alerts", handlers.AlertClearAll(deps.Querier))
 		v1.GET("/topology", handlers.TopologyGet(deps.Querier))
 		v1.GET("/vulnerabilities", handlers.GetVulnerabilities(deps.Querier))
 		v1.POST("/vulnerabilities/:id/mitigate", handlers.MitigateVulnerability(deps.Querier))
-		v1.POST("/scan", handlers.TriggerScan(deps.Querier))
+		v1.GET("/scan-history", handlers.GetScanHistory(deps.Querier))
+		v1.POST("/scan", handlers.TriggerScan(handlers.ScanDeps{
+			Querier: deps.Querier,
+			Config:  deps.Config,
+		}))
 		v1.GET("/config", handlers.ConfigGet)
 		v1.GET("/interfaces", handlers.GetInterfaces)
+		v1.GET("/system/metrics", handlers.GetSystemMetrics(time.Now()))
+		v1.GET("/dns/cache", handlers.DnsCacheGet(deps.Resolver))
 		
 		captureConfigDeps := handlers.CaptureConfigDeps{
 			Config:  deps.Config,
@@ -116,7 +133,36 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 		}
 		v1.GET("/capture/config", handlers.GetCaptureConfig(captureConfigDeps))
 		v1.POST("/capture/config", handlers.UpdateCaptureConfig(captureConfigDeps))
+		v1.GET("/capture/storage-policy", handlers.GetStoragePolicy(captureConfigDeps))
+		v1.POST("/capture/storage-policy", handlers.UpdateStoragePolicy(captureConfigDeps))
 		v1.POST("/capture/restart", handlers.RestartCapture(captureConfigDeps))
+		v1.POST("/capture/stop", handlers.StopCapture(captureConfigDeps))
+		
+		pcapDir := deps.Config.Capture.PcapDir
+		if pcapDir == "" {
+			pcapDir = filepath.Join("data", "pcaps")
+		}
+		v1.GET("/pcaps", handlers.ListPcaps(pcapDir))
+		v1.DELETE("/pcaps/:filename", handlers.DeletePcap(pcapDir))
+		v1.DELETE("/pcaps", handlers.DeleteAllPcaps(pcapDir))
+
+		// GeoIP returns the network's approximate geographic location
+		// so the frontend can render a real-world map with devices as
+		// points. The service is optional — when nil the endpoints
+		// return 503 instead of crashing.
+		if deps.GeoIP != nil {
+			geoipDeps := handlers.GeoIPDeps{GeoIP: deps.GeoIP}
+			v1.GET("/geoip", handlers.GeoIPNetworkLocation(geoipDeps))
+			v1.GET("/geoip/:ip", handlers.GeoIPLookup(geoipDeps))
+		}
+
+		// Ollama test endpoint — used by the UI "Test Conexion" button
+		// to verify the local Ollama is reachable and the configured
+		// model is available.
+		if deps.Config != nil {
+			ollamaDeps := handlers.OllamaTestDeps{Config: deps.Config}
+			v1.GET("/ollama/test", handlers.OllamaTest(ollamaDeps))
+		}
 
 		v1.POST("/chat", handlers.LLMChatHandler(deps.Querier))
 		v1.GET("/chat/history/:conversation_id", handlers.GetChatHistoryHandler(deps.Querier))

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/viewred/viewred/internal/capture"
 )
@@ -98,13 +100,18 @@ func Parse(line string) (*Rule, error) {
 
 // Engine evaluates packets against a set of rules.
 type Engine struct {
-	rules []*Rule
+	rules   []*Rule
+	dedupMu sync.Mutex
+	dedup   map[string]time.Time // fingerprint -> when it was last alerted
+	dedupTTL time.Duration
 }
 
-// NewEngine creates a new rules engine.
+// NewEngine creates a new rules engine with a 5-minute dedup interval.
 func NewEngine() *Engine {
 	return &Engine{
-		rules: make([]*Rule, 0),
+		rules:    make([]*Rule, 0),
+		dedup:    make(map[string]time.Time),
+		dedupTTL: 5 * time.Minute,
 	}
 }
 
@@ -121,13 +128,44 @@ func (e *Engine) AddRule(line string) error {
 	return nil
 }
 
-// Evaluate checks a packet against all loaded rules and returns a list of matching rules.
+// Evaluate checks a packet against all loaded rules and returns matching
+// rules that haven't fired in the last dedupTTL (5 min) for the same
+// (rule + src + dst + dst_port) tuple.
 func (e *Engine) Evaluate(pkt capture.PacketEvent) []*Rule {
 	var matches []*Rule
-	for _, r := range e.rules {
-		if match(r, pkt) {
-			matches = append(matches, r)
+	now := time.Now()
+
+	// Garbage-collect expired dedup entries every 100 calls (cheap, no
+	// goroutine needed for a 5-min TTL).
+	if len(e.dedup) > 1000 {
+		e.dedupMu.Lock()
+		for fp, last := range e.dedup {
+			if now.Sub(last) > e.dedupTTL {
+				delete(e.dedup, fp)
+			}
 		}
+		e.dedupMu.Unlock()
+	}
+
+	for _, r := range e.rules {
+		if !match(r, pkt) {
+			continue
+		}
+
+		// Dedup key: rule message + src IP + dst IP + dst port.
+		fp := fmt.Sprintf("%s|%s|%s|%s", r.Options["msg"], pkt.SrcIP, pkt.DstIP, r.DstPort)
+
+		e.dedupMu.Lock()
+		lastAlert, seen := e.dedup[fp]
+		if seen && now.Sub(lastAlert) < e.dedupTTL {
+			// Already alerted recently — skip.
+			e.dedupMu.Unlock()
+			continue
+		}
+		e.dedup[fp] = now
+		e.dedupMu.Unlock()
+
+		matches = append(matches, r)
 	}
 	return matches
 }

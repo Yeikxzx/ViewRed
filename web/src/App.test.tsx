@@ -39,6 +39,7 @@ vi.mock('./lib/api', () => ({
   acknowledgeAlert: vi.fn().mockResolvedValue(undefined),
   mitigateVulnerability: vi.fn().mockResolvedValue(undefined),
   getTopology: vi.fn(() => Promise.resolve({ nodes: [], edges: [] })),
+  getScanHistory: vi.fn(() => Promise.resolve([])),
 }));
 
 afterEach(() => cleanup());

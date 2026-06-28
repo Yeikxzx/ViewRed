@@ -12,14 +12,16 @@ import (
 // CORS default. The React UI runs on Vite at http://localhost:5173
 // and fetches the API on http://127.0.0.1:8080. Without this
 // default the browser blocks every API request with a CORS error
-// and the dashboard renders nothing. The dev convenience default
-// is the localhost:5173 origin; production deployments override
-// it via config.yaml's server.cors_origins.
+// and the dashboard renders nothing. The dev convenience defaults
+// include three common local origins (localhost:5173 for the Vite
+// dev server, 127.0.0.1:5173 as an alias, and 127.0.0.1:3000 for
+// alternate dev ports); production deployments override them via
+// config.yaml's server.cors_origins.
 func TestLoadDefaultsIncludeLocalhost5173CORSOrigin(t *testing.T) {
 	cfg, err := Load(filepath.Join(t.TempDir(), "nonexistent.yaml"))
 	require.NoError(t, err)
 	assert.Equal(t,
-		[]string{"http://localhost:5173"},
+		[]string{"http://localhost:5173", "http://127.0.0.1:5173", "http://127.0.0.1:3000"},
 		cfg.Server.CORSOrigins,
 		"default CORSOrigins must permit the Vite dev origin")
 }

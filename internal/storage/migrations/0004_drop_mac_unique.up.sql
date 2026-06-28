@@ -1,0 +1,1 @@
+ALTER TABLE devices DROP CONSTRAINT IF EXISTS devices_mac_key;

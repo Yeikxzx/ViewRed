@@ -7,7 +7,7 @@ import (
 // GetVulnerabilities retrieves vulnerabilities.
 func (s *Storage) GetVulnerabilities(ctx context.Context, includeMitigated bool) ([]Vulnerability, error) {
 	query := `
-		SELECT id, device_ip, cve_id, cvss_score, description, port, mitigated, discovered_at
+		SELECT id, device_ip::text, cve_id, cvss_score, description, port, mitigated, discovered_at
 		FROM vulnerabilities
 	`
 	if !includeMitigated {

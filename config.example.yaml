@@ -1,0 +1,57 @@
+# Ejemplo de configuracion de ViewRed.
+# Copiá este archivo a config.yaml y ajustá los valores para tu entorno.
+# Todos los valores que aparecen acá son los defaults del código; si no
+# cambiás nada, el binario arranca exactamente con esta configuración.
+
+# Servidor HTTP de la API y la UI embebida.
+server:
+  # Dirección en la que escucha el servidor. 127.0.0.1 solo permite conexiones locales.
+  bind_address: "127.0.0.1"
+  # Puerto de la API REST.
+  port: 8080
+  # Orígenes permitidos por CORS. En desarrollo incluimos los puertos típicos de Vite;
+  # en producción reemplazalos por el dominio real del frontend.
+  cors_origins:
+    - "http://localhost:5173"
+    - "http://127.0.0.1:5173"
+    - "http://127.0.0.1:3000"
+
+# Configuración de captura de paquetes con libpcap/Npcap.
+capture:
+  # Interfaz de red a monitorear. Dejala vacía para que el frontend te la deje elegir.
+  interface: ""
+  # Filtro BPF aplicado al tráfico capturado.
+  bpf: "tcp port 80 or tcp port 443"
+  # Bytes máximos que se guardan por paquete.
+  snaplen: 65535
+  # Tamaño máximo de los archivos .pcap en disco, en megabytes.
+  max_pcap_size_mb: 500
+  # Antigüedad máxima de los archivos .pcap, en horas.
+  max_pcap_age_hours: 168
+  # Directorio donde se almacenan las capturas.
+  pcap_dir: "data/pcaps"
+
+# Configuración de los módulos de inteligencia artificial.
+ai:
+  # URL base de la instancia de Ollama usada para el asistente LLM.
+  ollama_url: "http://localhost:11434"
+  # Modelo que responde en el asistente. Tiene que estar disponible en Ollama.
+  ollama_model: "qwen2.5:3b"
+  # Umbral de confianza para marcar un paquete como anomalía por ML.
+  ml_anomaly_threshold: 0.85
+  # Temperatura del LLM; valores más bajos dan respuestas más deterministas.
+  llm_temperature: 0.7
+
+# Configuración del escáner de vulnerabilidades con nmap.
+scanner:
+  # Ruta al ejecutable de nmap. Dejala vacía para que lo busque en el PATH.
+  nmap_path: ""
+  # Cantidad máxima de escaneos concurrentes.
+  max_concurrent_scans: 5
+  # Timeout de cada escaneo, en segundos.
+  scan_timeout_seconds: 600
+
+# Base de datos PostgreSQL con TimescaleDB.
+database:
+  # URL de conexión. Cambiala por tus credenciales reales; este valor es solo para desarrollo.
+  url: "postgres://viewred:viewred_dev_only@localhost:5432/viewred?sslmode=disable"

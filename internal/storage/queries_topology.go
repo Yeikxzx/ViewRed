@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"net"
 )
 
 // QueryTopology fetches all devices and the most recent topology edges.
@@ -12,7 +13,7 @@ func (s *Storage) QueryTopology(ctx context.Context) ([]Device, []TopologyEdge, 
 
 	// 1. Fetch all known devices
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, ip, mac, vendor, hostname, first_seen, last_seen, risk_score
+		`SELECT id, ip::text, mac, vendor, hostname, first_seen, last_seen, risk_score
 		 FROM devices
 		 ORDER BY id ASC`)
 	if err != nil {
@@ -32,6 +33,19 @@ func (s *Storage) QueryTopology(ctx context.Context) ([]Device, []TopologyEdge, 
 	if err := rows.Err(); err != nil {
 		return nil, nil, err
 	}
+
+	// Filter out public / external IPs so the topology only shows
+	// local network devices. The discovery engine now skips public
+	// IPs too, but this query-side filter cleans up any that were
+	// inserted before the engine fix.
+	filtered := devices[:0]
+	for _, d := range devices {
+		ip, _, err := net.ParseCIDR(d.IP)
+		if err == nil && (ip.IsPrivate() || ip.IsLinkLocalUnicast()) {
+			filtered = append(filtered, d)
+		}
+	}
+	devices = filtered
 
 	// 2. Fetch edges
 	edgeRows, err := s.db.QueryContext(ctx,
@@ -54,6 +68,22 @@ func (s *Storage) QueryTopology(ctx context.Context) ([]Device, []TopologyEdge, 
 	if err := edgeRows.Err(); err != nil {
 		return nil, nil, err
 	}
+
+	// Filter out edges whose src or dst device was removed by the
+	// private-IP filter above, plus any self-loop edges.
+	validIDs := make(map[int64]struct{}, len(devices))
+	for _, d := range devices {
+		validIDs[d.ID] = struct{}{}
+	}
+	filteredEdges := edges[:0]
+	for _, e := range edges {
+		_, srcOK := validIDs[e.SrcDeviceID]
+		_, dstOK := validIDs[e.DstDeviceID]
+		if srcOK && dstOK && e.SrcDeviceID != e.DstDeviceID {
+			filteredEdges = append(filteredEdges, e)
+		}
+	}
+	edges = filteredEdges
 
 	return devices, edges, nil
 }

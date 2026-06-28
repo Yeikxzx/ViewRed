@@ -35,7 +35,7 @@ export default function AsistenteView({
     'Resumen de las últimas 24h',
     'Tráfico anómalo detectado',
     'Vulnerabilidades críticas expuestas',
-    'Dispositivos nuevos en VLAN 20',
+    'Dispositivos nuevos detectados',
   ];
 
   const handleSend = (e: React.FormEvent) => {

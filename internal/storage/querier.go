@@ -141,6 +141,18 @@ type CustomRule struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// ScanHistory stores a record of an nmap scan execution.
+type ScanHistory struct {
+	ID           int64     `json:"id"`
+	Target       string    `json:"target"`
+	Profile      string    `json:"profile"`
+	DurationMs   int       `json:"duration_ms"`
+	HostsScanned int       `json:"hosts_scanned"`
+	VulnsFound   int       `json:"vulns_found"`
+	Status       string    `json:"status"`
+	StartedAt    time.Time `json:"started_at"`
+}
+
 type Vulnerability struct {
 	ID           int64     `json:"id"`
 	DeviceIP     string    `json:"device_ip"`
@@ -163,6 +175,8 @@ type Querier interface {
 	QueryTopology(ctx context.Context) ([]Device, []TopologyEdge, error)
 	QueryAlerts(ctx context.Context, filter AlertFilter) ([]Alert, int, error)
 	AcknowledgeAlert(ctx context.Context, id int64) error
+	DeleteAlert(ctx context.Context, id int64) error
+	ClearAlerts(ctx context.Context) error
 
 	EnsureConversationExists(ctx context.Context, conversationID string) error
 	SaveLLMMessage(ctx context.Context, msg LLMMessage) error
@@ -175,6 +189,9 @@ type Querier interface {
 	GetVulnerabilities(ctx context.Context, includeMitigated bool) ([]Vulnerability, error)
 	SaveVulnerability(ctx context.Context, v Vulnerability) (int64, error)
 	MitigateVulnerability(ctx context.Context, id int64) error
+
+	SaveScanHistory(ctx context.Context, s ScanHistory) (int64, error)
+	GetScanHistory(ctx context.Context, limit int) ([]ScanHistory, error)
 }
 
 // MockQuerier is a hand-rolled test double. Each method delegates to a
@@ -193,6 +210,8 @@ type MockQuerier struct {
 	TopologyFn         func(ctx context.Context) ([]Device, []TopologyEdge, error)
 	AlertsFn           func(ctx context.Context, filter AlertFilter) ([]Alert, int, error)
 	AcknowledgeAlertFn func(ctx context.Context, id int64) error
+	DeleteAlertFn       func(ctx context.Context, id int64) error
+	ClearAlertsFn       func(ctx context.Context) error
 
 	EnsureConversationExistsFn func(ctx context.Context, conversationID string) error
 	SaveLLMMessageFn           func(ctx context.Context, msg LLMMessage) error
@@ -205,6 +224,9 @@ type MockQuerier struct {
 	GetVulnerabilitiesFn    func(ctx context.Context, includeMitigated bool) ([]Vulnerability, error)
 	SaveVulnerabilityFn     func(ctx context.Context, v Vulnerability) (int64, error)
 	MitigateVulnerabilityFn func(ctx context.Context, id int64) error
+
+	SaveScanHistoryFn func(ctx context.Context, s ScanHistory) (int64, error)
+	GetScanHistoryFn  func(ctx context.Context, limit int) ([]ScanHistory, error)
 }
 
 // Compile-time check that MockQuerier implements Querier. If the
@@ -264,6 +286,20 @@ func (m *MockQuerier) QueryAlerts(ctx context.Context, filter AlertFilter) ([]Al
 func (m *MockQuerier) AcknowledgeAlert(ctx context.Context, id int64) error {
 	if m.AcknowledgeAlertFn != nil {
 		return m.AcknowledgeAlertFn(ctx, id)
+	}
+	return nil
+}
+
+func (m *MockQuerier) DeleteAlert(ctx context.Context, id int64) error {
+	if m.DeleteAlertFn != nil {
+		return m.DeleteAlertFn(ctx, id)
+	}
+	return nil
+}
+
+func (m *MockQuerier) ClearAlerts(ctx context.Context) error {
+	if m.ClearAlertsFn != nil {
+		return m.ClearAlertsFn(ctx)
 	}
 	return nil
 }
@@ -331,6 +367,20 @@ func (m *MockQuerier) MitigateVulnerability(ctx context.Context, id int64) error
 	return nil
 }
 
+func (m *MockQuerier) SaveScanHistory(ctx context.Context, s ScanHistory) (int64, error) {
+	if m.SaveScanHistoryFn != nil {
+		return m.SaveScanHistoryFn(ctx, s)
+	}
+	return 0, nil
+}
+
+func (m *MockQuerier) GetScanHistory(ctx context.Context, limit int) ([]ScanHistory, error) {
+	if m.GetScanHistoryFn != nil {
+		return m.GetScanHistoryFn(ctx, limit)
+	}
+	return nil, nil
+}
+
 // ErrorQuerier returns its Err from every method. main.go injects this
 // when storage initialization fails, so HTTP handlers never need a nil
 // check on the querier — every error maps cleanly to a 503.
@@ -391,7 +441,15 @@ func (e *ErrorQuerier) QueryAlerts(ctx context.Context, filter AlertFilter) ([]A
 }
 
 func (e *ErrorQuerier) AcknowledgeAlert(ctx context.Context, id int64) error {
-	return e.err()
+	return e.Err
+}
+
+func (e *ErrorQuerier) DeleteAlert(ctx context.Context, id int64) error {
+	return e.Err
+}
+
+func (e *ErrorQuerier) ClearAlerts(ctx context.Context) error {
+	return e.Err
 }
 
 func (e *ErrorQuerier) EnsureConversationExists(ctx context.Context, conversationID string) error {
@@ -428,4 +486,12 @@ func (e *ErrorQuerier) SaveVulnerability(ctx context.Context, v Vulnerability) (
 
 func (e *ErrorQuerier) MitigateVulnerability(ctx context.Context, id int64) error {
 	return e.err()
+}
+
+func (e *ErrorQuerier) SaveScanHistory(ctx context.Context, s ScanHistory) (int64, error) {
+	return 0, e.err()
+}
+
+func (e *ErrorQuerier) GetScanHistory(ctx context.Context, limit int) ([]ScanHistory, error) {
+	return nil, e.err()
 }

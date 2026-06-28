@@ -25,6 +25,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/viewred/viewred/internal/capture"
+	"github.com/viewred/viewred/internal/resolver"
 	"github.com/viewred/viewred/internal/storage"
 )
 
@@ -66,7 +67,22 @@ const packetsDefaultOffset = 0
 // (time DESC, newest first). The handler maps each event to a
 // snake-case JSON shape so the HTTP contract is decoupled from the
 // capture package's field names.
+//
+// PacketsList is a thin convenience wrapper that omits the DNS
+// resolver (used in unit tests that don't exercise hostname
+// enrichment). The production router uses PacketsListWithResolver.
 func PacketsList(q storage.Querier) gin.HandlerFunc {
+	return PacketsListWithResolver(q, nil)
+}
+
+// PacketsListWithResolver is the production form of PacketsList.
+// When res is non-nil, each event is enriched with `src_hostname`
+// and `dst_hostname` fields by looking the IP up in the resolver's
+// IP→hostname cache. A nil resolver produces the same shape minus
+// the two hostname fields, so the JSON contract degrades cleanly
+// for tests and for the (unreachable, but defensive) case where the
+// resolver goroutine is down.
+func PacketsListWithResolver(q storage.Querier, res *resolver.Resolver) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		filter, err := parsePacketsFilter(c)
 		if err != nil {
@@ -93,7 +109,7 @@ func PacketsList(q storage.Querier) gin.HandlerFunc {
 		// base64, which the React client can decode for display.
 		items := make([]gin.H, 0, len(events))
 		for _, ev := range events {
-			items = append(items, packetEventJSON(ev))
+			items = append(items, packetEventJSON(ev, res))
 		}
 
 		c.JSON(http.StatusOK, gin.H{
@@ -124,17 +140,17 @@ func parsePacketsFilter(c *gin.Context) (storage.PacketFilter, error) {
 	}
 	f.Since = since
 
-	// until — optional. Empty string means "no upper bound"; the SQL
-	// treats an unset Until the same as a zero-value time.Time
-	// (time >= epoch zero), which the WHERE clause collapses into
-	// "match all rows" via the same pattern as the empty filter
-	// columns.
+	// until — optional. Defaults to "now" (infinity in practice) so
+	// the WHERE time <= $2 clause doesn't filter everything out when
+	// the parameter is absent.
 	if raw := c.Query("until"); raw != "" {
 		t, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
 			return f, errors.New("until: must be RFC3339 (e.g. 2026-06-18T11:00:00Z)")
 		}
 		f.Until = t
+	} else {
+		f.Until = time.Now().Add(24 * time.Hour)
 	}
 
 	// String filters — passed verbatim. The SQL's
@@ -195,8 +211,13 @@ func parsePacketsFilter(c *gin.Context) (storage.PacketFilter, error) {
 // shape, and a future internal consumer of PacketEvent would carry
 // those tags around. Mapping at the handler boundary is the cleaner
 // split.
-func packetEventJSON(ev capture.PacketEvent) gin.H {
-	return gin.H{
+//
+// When res is non-nil, the returned object carries `src_hostname`
+// and `dst_hostname` fields populated from the resolver's
+// IP→hostname cache. A nil resolver drops the two fields, which
+// the UI handles by simply not rendering a hostname label.
+func packetEventJSON(ev capture.PacketEvent, res *resolver.Resolver) gin.H {
+	h := gin.H{
 		"time":            ev.Timestamp,
 		"src_ip":          ev.SrcIP,
 		"dst_ip":          ev.DstIP,
@@ -206,4 +227,9 @@ func packetEventJSON(ev capture.PacketEvent) gin.H {
 		"length":          ev.Length,
 		"payload_preview": ev.PayloadPreview,
 	}
+	if res != nil {
+		h["src_hostname"] = res.Resolve(ev.SrcIP)
+		h["dst_hostname"] = res.Resolve(ev.DstIP)
+	}
+	return h
 }

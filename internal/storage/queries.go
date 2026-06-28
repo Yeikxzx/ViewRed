@@ -126,11 +126,25 @@ const qTopTalkers = `
 WITH combined AS (
     SELECT src_ip AS ip, length AS bytes, 1 AS pkts
     FROM packets
-    WHERE time >= $1
+    WHERE time >= $1 AND (
+        src_ip << '10.0.0.0/8' OR
+        src_ip << '172.16.0.0/12' OR
+        src_ip << '192.168.0.0/16' OR
+        src_ip << '127.0.0.0/8' OR
+        src_ip << '169.254.0.0/16' OR
+        src_ip << '100.64.0.0/10'
+    )
     UNION ALL
     SELECT dst_ip AS ip, length AS bytes, 1 AS pkts
     FROM packets
-    WHERE time >= $1
+    WHERE time >= $1 AND (
+        dst_ip << '10.0.0.0/8' OR
+        dst_ip << '172.16.0.0/12' OR
+        dst_ip << '192.168.0.0/16' OR
+        dst_ip << '127.0.0.0/8' OR
+        dst_ip << '169.254.0.0/16' OR
+        dst_ip << '100.64.0.0/10'
+    )
 )
 SELECT ip, SUM(bytes)::bigint AS bytes, SUM(pkts)::bigint AS packets
 FROM combined
@@ -286,13 +300,22 @@ const maxPacketsLimit = 500
 // $6 limit, $7 offset. The ($N = ” OR col = $N) guards let an empty
 // filter string act as a wildcard, which is the spec's "any" semantic
 // for an unfiltered column.
+//
+// IP columns are stored as PostgreSQL `inet`, which serialises to
+// text as "192.168.100.8/32" (CIDR with a /32 suffix for IPv4
+// hosts). A caller-supplied filter of "192.168.100.8" therefore
+// never matches the stored value. `host()` strips the CIDR suffix
+// on both sides of the comparison so the two formats align. We also
+// project the IP through `host()` in the SELECT so the JSON
+// response carries the bare address ("192.168.100.8") rather than
+// the CIDR form, which the UI otherwise has to strip.
 const qPackets = `
-SELECT time, src_ip, dst_ip, src_port, dst_port, protocol, length, payload_preview
+SELECT time, host(src_ip), host(dst_ip), src_port, dst_port, protocol, length, payload_preview
 FROM packets
 WHERE time >= $1 AND time <= $2
   AND ($3 = '' OR protocol = $3)
-  AND ($4 = '' OR src_ip = $4)
-  AND ($5 = '' OR dst_ip = $5)
+  AND ($4 = '' OR host(src_ip) = $4)
+  AND ($5 = '' OR host(dst_ip) = $5)
   AND ($6 = 0 OR src_port = $6 OR dst_port = $6)
   AND ($7 = '' OR encode(payload_preview, 'escape') ILIKE '%' || $7 || '%')
 ORDER BY time DESC
@@ -302,14 +325,15 @@ LIMIT $8 OFFSET $9
 // qPacketsCount mirrors the WHERE clause of qPackets but emits a
 // single integer — the total number of rows that match the filter,
 // ignoring LIMIT/OFFSET. The handler/UI use this to render "page N of
-// M" controls.
+// M" controls. Uses `host()` on the IP columns for the same reason
+// as qPackets: the stored values are CIDR, the filter is bare.
 const qPacketsCount = `
 SELECT COUNT(*)
 FROM packets
 WHERE time >= $1 AND time <= $2
   AND ($3 = '' OR protocol = $3)
-  AND ($4 = '' OR src_ip = $4)
-  AND ($5 = '' OR dst_ip = $5)
+  AND ($4 = '' OR host(src_ip) = $4)
+  AND ($5 = '' OR host(dst_ip) = $5)
   AND ($6 = 0 OR src_port = $6 OR dst_port = $6)
   AND ($7 = '' OR encode(payload_preview, 'escape') ILIKE '%' || $7 || '%')
 `
@@ -439,7 +463,7 @@ const maxDevicesLimit = 500
 // the design doc's *float64 contract (NULL → nil) survives a future
 // refactor that drops the COALESCE.
 const qDevices = `
-SELECT id, ip, mac, COALESCE(vendor, ''), COALESCE(hostname, ''),
+SELECT id, ip::text, mac, COALESCE(vendor, ''), COALESCE(hostname, ''),
        first_seen, last_seen, risk_score
 FROM devices
 ORDER BY last_seen DESC
@@ -614,6 +638,24 @@ func (s *Storage) AcknowledgeAlert(ctx context.Context, id int64) error {
 		// For now we'll just return nil to keep it idempotent.
 	}
 	return nil
+}
+
+// DeleteAlert removes an alert by ID.
+func (s *Storage) DeleteAlert(ctx context.Context, id int64) error {
+	if s.db == nil {
+		return errStorageNotInitialized
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM alerts WHERE id = $1`, id)
+	return err
+}
+
+// ClearAlerts removes ALL alerts from the database.
+func (s *Storage) ClearAlerts(ctx context.Context) error {
+	if s.db == nil {
+		return errStorageNotInitialized
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM alerts`)
+	return err
 }
 
 

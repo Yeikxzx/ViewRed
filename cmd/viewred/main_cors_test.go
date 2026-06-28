@@ -43,7 +43,7 @@ func TestNewWireUp_WiresCORSFromConfig(t *testing.T) {
 	cfg = &loaded
 	require.NotEmpty(t, cfg.Server.CORSOrigins, "test precondition: config must have a default CORSOrigins")
 
-	w := newWireUp(cfg, health.New(), &storage.MockQuerier{}, nil)
+	w := newWireUp(cfg, health.New(), &storage.MockQuerier{}, nil, nil, nil)
 
 	server := httptest.NewServer(w.Router)
 	defer server.Close()
@@ -92,7 +92,7 @@ func TestNewWireUp_PassesCORSConfigOverrides(t *testing.T) {
 		},
 	}
 
-	w := newWireUp(cfg, health.New(), &storage.MockQuerier{}, nil)
+	w := newWireUp(cfg, health.New(), &storage.MockQuerier{}, nil, nil, nil)
 
 	server := httptest.NewServer(w.Router)
 	defer server.Close()

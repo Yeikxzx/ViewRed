@@ -66,12 +66,17 @@ type Elem struct {
 
 // Engine wraps the nmap binary invocation.
 type Engine struct {
-	querier storage.Querier
+	querier  storage.Querier
+	nmapPath string
 }
 
-// NewEngine creates a new scanner engine.
-func NewEngine(q storage.Querier) *Engine {
-	return &Engine{querier: q}
+// NewEngine creates a new scanner engine. nmapPath is the full path to
+// the nmap binary; when empty "nmap" is used (PATH lookup).
+func NewEngine(q storage.Querier, nmapPath string) *Engine {
+	if nmapPath == "" {
+		nmapPath = "nmap"
+	}
+	return &Engine{querier: q, nmapPath: nmapPath}
 }
 
 // Scan synchronously executes an nmap scan and persists the findings.
@@ -93,7 +98,7 @@ func (e *Engine) Scan(ctx context.Context, ip string, profile string) error {
 	
 	args = append(args, ip)
 
-	cmd := exec.CommandContext(ctx, "nmap", args...)
+	cmd := exec.CommandContext(ctx, e.nmapPath, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		return fmt.Errorf("nmap execution failed: %w", err)
@@ -150,7 +155,9 @@ func (e *Engine) Scan(ctx context.Context, ip string, profile string) error {
 								Port:        &portNum,
 								Mitigated:   false,
 							}
-							_, _ = e.querier.SaveVulnerability(ctx, v)
+							if _, err := e.querier.SaveVulnerability(ctx, v); err != nil {
+								return fmt.Errorf("save CVE %s: %w", cveID, err)
+							}
 						}
 					}
 				}
@@ -165,7 +172,9 @@ func (e *Engine) Scan(ctx context.Context, ip string, profile string) error {
 					Port:        &portNum,
 					Mitigated:   false,
 				}
-				_, _ = e.querier.SaveVulnerability(ctx, v)
+				if _, err := e.querier.SaveVulnerability(ctx, v); err != nil {
+					return fmt.Errorf("save port %d: %w", portNum, err)
+				}
 			}
 		}
 	}

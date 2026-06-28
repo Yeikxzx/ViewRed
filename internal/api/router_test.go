@@ -147,6 +147,7 @@ func TestNewRouterWithDeps_WiresAllRoutes(t *testing.T) {
 		{"alert-ack", http.MethodPost, "/api/v1/alerts/foo/ack"},
 		{"topology", http.MethodGet, "/api/v1/topology"},
 		{"vulnerabilities", http.MethodGet, "/api/v1/vulnerabilities"},
+		{"scan-history", http.MethodGet, "/api/v1/scan-history"},
 		{"config", http.MethodGet, "/api/v1/config"},
 	}
 	for _, tt := range syncRoutes {

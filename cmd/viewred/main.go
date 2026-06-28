@@ -30,9 +30,11 @@ import (
 	"github.com/viewred/viewred/internal/capture"
 	"github.com/viewred/viewred/internal/config"
 	"github.com/viewred/viewred/internal/discovery"
+	"github.com/viewred/viewred/internal/geoip"
 	"github.com/viewred/viewred/internal/health"
 	"github.com/viewred/viewred/internal/api/handlers"
 	"github.com/viewred/viewred/internal/ml"
+	"github.com/viewred/viewred/internal/resolver"
 	"github.com/viewred/viewred/internal/rules"
 	"github.com/viewred/viewred/internal/shutdown"
 	"github.com/viewred/viewred/internal/sse"
@@ -114,6 +116,18 @@ func main() {
 	packets := make(chan capture.PacketEvent, 4096)
 	evalPackets := make(chan capture.PacketEvent, 4096)
 	bpfFilter := cfg.Capture.BPF
+
+	// DNS resolver: process-local IP→hostname cache populated
+	// from DNS responses on the wire. The capture pipeline
+	// extracts A/AAAA records onto each PacketEvent; the
+	// bridge goroutine below feeds them into the resolver.
+	// HTTP handlers consult the resolver to enrich packet
+	// responses with hostnames ("192.168.100.8 → google.com")
+	// without touching the storage layer.
+	dnsResolver := resolver.New()
+	dnsResolver.Run()
+	defer dnsResolver.Stop()
+
 	if err := cap.Start(iface, bpfFilter); err != nil {
 		log.Printf("capture start failed: %v", err)
 	} else {
@@ -135,6 +149,17 @@ func main() {
 		// reclaim it.
 		go func() {
 			for e := range cap.Packets() {
+				// Feed DNS A/AAAA answers into the resolver before
+				// forwarding. This is non-blocking (in-memory map
+				// update) and runs in the same goroutine as the
+				// bridge so the cache stays in sync with the
+				// packet stream. Skipping it here would mean the
+				// HTTP handler can't resolve hostnames until
+				// the next reader-writer cycle completes.
+				for _, ans := range e.DNSAnswers {
+					dnsResolver.Set(ans.IP, ans.Hostname, ans.TTL)
+				}
+
 				// Send to primary queue (storage/pcap)
 				select {
 				case packets <- e:
@@ -156,12 +181,17 @@ func main() {
 	}
 
 	// Start the pcap file writer
-	pcapDir := os.Getenv("VIEWRED_PCAP_DIR")
+	pcapDir := cfg.Capture.PcapDir
 	if pcapDir == "" {
-		pcapDir = filepath.Join(os.TempDir(), "viewred-pcap")
+		pcapDir = filepath.Join("data", "pcaps")
 	}
+	// Ensure directory exists
+	if err := os.MkdirAll(pcapDir, 0755); err != nil {
+		log.Printf("failed to create pcap dir: %v", err)
+	}
+
 	var pw *capture.PcapWriter
-	pw, err = capture.NewPcapWriter(pcapDir, 100*1024*1024 /* 100MB */, 1*time.Hour)
+	pw, err = capture.NewPcapWriter(pcapDir, int64(cfg.Capture.MaxPcapSizeMB)*1024*1024, time.Duration(cfg.Capture.MaxPcapAgeHours)*time.Hour)
 	if err != nil {
 		log.Printf("pcap writer init failed: %v", err)
 		pw = nil
@@ -225,7 +255,12 @@ func main() {
 		Packets:     packets,
 		EvalPackets: evalPackets,
 	}
-	wire := newWireUp(&cfg, rg, querier, captureHandle)
+
+	// GeoIP service for the topology map. Uses ip-api.com with a 1h
+	// cache so repeat topology polling doesn't hit the external API.
+	geoipSvc := geoip.NewService(1 * time.Hour)
+
+	wire := newWireUp(&cfg, rg, querier, dnsResolver, captureHandle, geoipSvc)
 	// Set broker after wire creation to break the circular dependency:
 	// captureHandle → broker ← wire → captureHandle → RouterDeps.
 	captureHandle.Broker = wire.Broker

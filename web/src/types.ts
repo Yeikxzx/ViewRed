@@ -59,7 +59,7 @@ export interface Vulnerability {
   id: string;
   cve: string;
   cvss: number;
-  severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO-PORT';
   title: string;
   description: string;
   targetDevice: string;
@@ -71,10 +71,27 @@ export interface Vulnerability {
 }
 
 export interface CapturedPacket {
-  id: number;
+  // String id, content-derived (time + 5-tuple + protocol) so the
+  // selected packet survives auto-refreshes that would otherwise
+  // shift pagination-based numeric ids. The old numeric id was
+  // `total - offset - idx`, which silently broke the selection
+  // every time a new packet arrived.
+  id: string;
+  // Display-only number rendered in the "NO." column.
+  // Recomputed per-fetch from `total - idx` so it stays
+  // monotonically decreasing as the user scrolls; decoupled
+  // from `id` because the display number shifting across
+  // refreshes is harmless (it's just a label).
+  number: number;
   time: string;
   source: string;
   destination: string;
+  // Optional resolved hostnames. Populated by the backend's DNS
+  // resolver when a recent A/AAAA record mapped the IP to a
+  // hostname. Empty string when the cache has no entry — the UI
+  // renders nothing in that case rather than a placeholder.
+  sourceHostname?: string;
+  destinationHostname?: string;
   protocol: string;
   length: number;
   info: string;

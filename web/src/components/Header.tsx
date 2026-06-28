@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Search, Sparkles, SlidersHorizontal, Settings, HelpCircle, Terminal } from 'lucide-react';
 import { ViewType } from '../types';
 
@@ -20,6 +21,8 @@ export default function Header({
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearchModal, setShowSearchModal] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const navigate = useNavigate();
+  const [selectedIndex, setSelectedIndex] = useState(0);
 
   // Command palette hotkey (⌘K or Ctrl+K)
   useEffect(() => {
@@ -45,77 +48,84 @@ export default function Header({
     setShowSearchModal(false);
   };
 
-  const navTitles: Record<ViewType, string> = {
-    dashboard: 'Resumen de Red',
-    captura: 'Control de Captura',
-    filtros: 'Constructor de Filtros',
-    alertas: 'Alertas de Seguridad',
-    topologia: 'Topología de Red 2D',
-    vulnerabilidades: 'Vulnerabilidades Detectadas',
-    asistente: 'Asistente IA ViewRed',
-    configuracion: 'Configuración del Sistema',
-  };
+  const quickCommands = [
+    { label: 'Ir al Dashboard de Control', view: 'dashboard' as ViewType, desc: 'Métricas, throughput y resumen de amenazas.' },
+    { label: 'Abrir Captura en Vivo (pcap)', view: 'captura' as ViewType, desc: 'Ver interfaces activas, rotación y buffers.' },
+    { label: 'Constructor de Filtros Hex', view: 'filtros' as ViewType, desc: 'Búsquedas booleanas de payload hexadecimal.' },
+    { label: 'Stream de Alertas IDS', view: 'alertas' as ViewType, desc: 'Ver alertas críticas emitidas por Suricata.' },
+    { label: 'Auditoría Topológica 2D', view: 'topologia' as ViewType, desc: 'Interactuar con el grafo de conectividad de red.' },
+    { label: 'Vulnerabilidades y Binarios', view: 'vulnerabilidades' as ViewType, desc: 'Configurar escaneos Nmap de largo alcance.' },
+    { label: 'Chat con Asistente IA', view: 'asistente' as ViewType, desc: 'Explicación interactiva sobre malware a nivel de red.' },
+  ];
 
-  const navDescriptions: Record<ViewType, string> = {
-    dashboard: 'Estado global de captura, throughput y análisis automático en tiempo real.',
-    captura: 'Tráfico en interfaces de hardware, almacenamiento de PCAPs y políticas de retención.',
-    filtros: 'Detección profunda de paquetes y mapeo hexadecimal con constructores de expresiones.',
-    alertas: 'Disparadores e incidencias críticas por firmas Suricata IDS y algoritmos estocásticos.',
-    topologia: 'Grafo de conectividad activa, detección de VLANs secundarias y auditoría de riesgos.',
-    vulnerabilidades: 'Escaneo cibernético de endpoints mediante integraciones de binarios Nmap/NSE.',
-    asistente: 'Modelado local LLM y explicaciones contextuales de vulnerabilidades detectadas.',
-    configuracion: 'Parámetros del colector pcap, variables del host, rutas y umbrales de seguridad.',
+  const filteredCommands = quickCommands.filter(item => item.label.toLowerCase().includes(searchQuery.toLowerCase()) || searchQuery === '');
+  const totalItems = filteredCommands.length + (searchQuery ? 1 : 0);
+
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [searchQuery]);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setSelectedIndex((prev) => (prev + 1) % totalItems);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setSelectedIndex((prev) => (prev - 1 + totalItems) % totalItems);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (selectedIndex < filteredCommands.length) {
+        handleQuickCommand(filteredCommands[selectedIndex].view);
+      } else if (searchQuery) {
+        setShowSearchModal(false);
+        navigate('/filtros', { state: { query: searchQuery } });
+      }
+    }
   };
 
   return (
     <>
       <header
         id="app-header-bar"
-        className="h-14 bg-[#131820] border-b border-[#2a3242] sticky top-0 z-40 px-6 flex items-center justify-between"
+        className="h-14 bg-[#131820] border-b border-[#2a3242] sticky top-0 z-40 px-6 flex items-center justify-between gap-4"
       >
-        {/* Title Group */}
-        <div className="flex flex-col text-left">
-          <h1 className="font-sans font-bold text-[#e4e7eb] text-base leading-none tracking-tight">
-            {navTitles[currentView]}
-          </h1>
-          <span className="font-sans text-[11px] text-[#9ba3b4] mt-1 hidden sm:inline">
-            {navDescriptions[currentView]}
-          </span>
-        </div>
+        {/* Left spacer to perfectly center the search bar */}
+        <div className="flex-1 hidden md:block"></div>
 
-        {/* Global actions group */}
-        <div className="flex items-center gap-4">
-          {/* Quick command search input bar */}
-          <div className="relative hidden md:block select-none">
-            <button
-              onClick={() => setShowSearchModal(true)}
-              className="w-64 bg-[#0a0e14] border border-[#2a3242] hover:border-[#3a4356] text-[#9ba3b4] hover:text-[#e4e7eb] rounded-md py-1.5 pl-3 pr-10 text-xs font-sans text-left flex items-center justify-between transition-all"
-            >
+        {/* Quick command search input bar */}
+        <div className="relative hidden md:block select-none w-full max-w-2xl">
+          <button
+            onClick={() => setShowSearchModal(true)}
+            className="w-full bg-[#0a0e14] border border-[#2a3242] hover:border-[#3a4356] text-[#9ba3b4] hover:text-[#e4e7eb] rounded-md py-1.5 pl-3 pr-10 text-xs font-sans text-left flex items-center justify-between transition-all mx-auto"
+          >
               <span className="flex items-center gap-2">
                 <Search className="h-3.5 w-3.5 text-[#5c6473]" />
                 <span>Buscar IPs, protocolos, CVEs...</span>
               </span>
               <kbd className="bg-[#1c2230] text-[9px] font-mono px-1.5 py-0.5 rounded text-[#5c6473] border border-[#2a3242]">
-                ⌘K
+                {navigator.platform.toLowerCase().includes('mac') ? '⌘K' : 'Ctrl+K'}
               </kbd>
             </button>
-          </div>
+        </div>
 
+        {/* Global actions group */}
+        <div className="flex items-center justify-end gap-4 flex-1">
           {/* Connection / Capture status badge */}
           <button
             onClick={toggleCapture}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-[11px] font-mono font-medium tracking-wide transition-all ${
+            className={`group flex items-center gap-2.5 px-3.5 py-1.5 rounded-md border text-xs font-sans font-semibold tracking-wider transition-all shadow-sm ${
               isCapturing
-                ? 'bg-[#10b981]/10 text-[#10b981] border-[#10b981]/30 hover:bg-[#10b981]/20'
-                : 'bg-red-500/10 text-red-500 border-red-500/30 hover:bg-red-500/20'
+                ? 'bg-[#0a0e14] border-[#10b981]/30 text-[#10b981] hover:border-[#10b981]/50 hover:bg-[#10b981]/10 hover:shadow-[0_0_10px_rgba(16,185,129,0.2)]'
+                : 'bg-[#0a0e14] border-red-500/30 text-red-500 hover:border-red-500/50 hover:bg-red-500/10 hover:shadow-[0_0_10px_rgba(239,68,68,0.2)]'
             }`}
           >
-            <span
-              className={`w-1.5 h-1.5 rounded-full ${
-                isCapturing ? 'bg-[#10b981] animate-ping' : 'bg-red-500'
-              }`}
-            />
-            <span>{isCapturing ? 'CAPTURA ACTIVA' : 'PCAP DETENIDO'}</span>
+            <div className="relative flex h-2 w-2 items-center justify-center">
+              {isCapturing && (
+                <span className="absolute inline-flex h-3.5 w-3.5 animate-ping rounded-full bg-[#10b981] opacity-60"></span>
+              )}
+              <span className={`relative inline-flex h-1.5 w-1.5 rounded-full ${isCapturing ? 'bg-[#10b981]' : 'bg-red-500'}`}></span>
+            </div>
+            <span>{isCapturing ? 'Capturando' : 'Pausado'}</span>
           </button>
 
           {/* Sparkles AI button */}
@@ -145,16 +155,7 @@ export default function Header({
             <Settings className="h-4 w-4" />
           </button>
 
-          {/* Small User Info / Avatar */}
-          <div className="flex items-center gap-2 border-l border-[#2a3242] pl-3.5">
-            <div className="w-7 h-7 bg-[#1c2230] hover:bg-[#2a3242] text-[#3b82f6] ring-1 ring-[#2a3242] flex items-center justify-center font-bold text-xs rounded-full cursor-pointer select-none">
-              OP
-            </div>
-            <div className="hidden lg:flex flex-col text-left">
-              <span className="font-sans font-semibold text-xs text-[#e4e7eb]">SecOps Admin</span>
-              <span className="font-sans text-[10px] text-[#5c6473]">Nivel Administrador</span>
-            </div>
-          </div>
+          {/* Reserved: user avatar area */}
         </div>
       </header>
 
@@ -171,7 +172,8 @@ export default function Header({
                 placeholder="Escribe un comando, IP, o sección..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="bg-transparent border-0 outline-none ring-0 w-full text-sm text-[#e4e7eb] placeholder-[#5c6473]"
+                onKeyDown={handleKeyDown}
+                className="w-full bg-transparent border-none outline-none text-[#e4e7eb] placeholder-[#5c6473] font-sans"
               />
               <button
                 onClick={() => setShowSearchModal(false)}
@@ -187,23 +189,15 @@ export default function Header({
                 Navegación Rápida de Secciones
               </div>
 
-              {[
-                { label: 'Ir al Dashboard de Control', view: 'dashboard' as ViewType, desc: 'Métricas, throughput y resumen de amenazas.' },
-                { label: 'Abrir Captura en Vivo (pcap)', view: 'captura' as ViewType, desc: 'Ver interfaces activas, rotación y buffers.' },
-                { label: 'Constructor de Filtros Hex', view: 'filtros' as ViewType, desc: 'Búsquedas booleanas de payload hexadecimal.' },
-                { label: 'Stream de Alertas IDS', view: 'alertas' as ViewType, desc: 'Ver alertas críticas emitidas por Suricata.' },
-                { label: 'Auditoría Topológica 2D', view: 'topologia' as ViewType, desc: 'Interactuar con el grafo de conectividad de red.' },
-                { label: 'Vulnerabilidades y Binarios', view: 'vulnerabilidades' as ViewType, desc: 'Configurar escaneos Nmap de largo alcance.' },
-                { label: 'Chat con Asistente IA', view: 'asistente' as ViewType, desc: 'Explicación interactiva sobre malware a nivel de red.' },
-              ]
-                .filter(item => item.label.toLowerCase().includes(searchQuery.toLowerCase()) || searchQuery === '')
-                .map((item) => (
+              {filteredCommands.map((item, index) => (
                   <button
                     key={item.view}
                     onClick={() => handleQuickCommand(item.view)}
-                    className="w-full text-left px-3.5 py-2 hover:bg-[#1c2230] rounded-md flex items-center gap-3 transition-colors group"
+                    className={`w-full text-left px-3.5 py-2 rounded-md flex items-center gap-3 transition-colors group ${
+                      selectedIndex === index ? 'bg-[#1c2230]' : 'hover:bg-[#1c2230]'
+                    }`}
                   >
-                    <Terminal className="h-3.5 w-3.5 text-[#5c6473] group-hover:text-[#3b82f6]" />
+                    <Terminal className={`h-3.5 w-3.5 ${selectedIndex === index ? 'text-[#3b82f6]' : 'text-[#5c6473] group-hover:text-[#3b82f6]'}`} />
                     <div className="flex flex-col">
                       <span className="text-xs text-[#e4e7eb] font-medium">{item.label}</span>
                       <span className="text-[10px] text-[#5c6473] mt-0.5">{item.desc}</span>
@@ -219,10 +213,12 @@ export default function Header({
                   </div>
                   <button
                     onClick={() => {
-                      setView('filtros');
                       setShowSearchModal(false);
+                      navigate('/filtros', { state: { query: searchQuery } });
                     }}
-                    className="w-full text-left px-3.5 py-2 hover:bg-[#1c2230] rounded-md flex items-center gap-3 text-xs text-[#e4e7eb]"
+                    className={`w-full text-left px-3.5 py-2 rounded-md flex items-center gap-3 text-xs text-[#e4e7eb] ${
+                      selectedIndex === filteredCommands.length ? 'bg-[#1c2230]' : 'hover:bg-[#1c2230]'
+                    }`}
                   >
                     <SlidersHorizontal className="h-3.5 w-3.5 text-[#3b82f6]" />
                     <span>Filtrar red para consulta: <strong className="text-[#3b82f6] font-mono">"{searchQuery}"</strong></span>

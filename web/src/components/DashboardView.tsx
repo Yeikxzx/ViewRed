@@ -19,7 +19,6 @@ import {
   Tooltip,
 } from 'recharts';
 import { KPI, ViewType, NetworkAlert, IPVolume } from '../types';
-import { initialTrafficHistory } from '../data/mockData';
 import { getTopTalkers, getProtocols, getRecentAlerts } from '../lib/api';
 import { useSSE } from '../lib/sse';
 import { useSSEStore } from '../store/sse-store';
@@ -151,21 +150,10 @@ export default function DashboardView({
   // (a new reference per broker tick) so we never call setState during
   // render. The functional `setTrafficData` form makes the dedup check
   // race-free without needing a ref to the previous state.
-  const [trafficData, setTrafficData] = useState(initialTrafficHistory);
+  const [trafficData, setTrafficData] = useState<{ time: string; tcp: number; udp: number; other: number }[]>([]);
   useEffect(() => {
     if (metrics === undefined) return;
     setTrafficData((prev) => {
-      const last = prev[prev.length - 1];
-      // Only append when the value actually changed — the broker
-      // ticks at 1 Hz, so a steady stream of identical values would
-      // otherwise grow the history without adding information.
-      if (
-        last &&
-        last.tcp === metrics.bytes_per_sec &&
-        last.udp === metrics.packets_per_sec
-      ) {
-        return prev;
-      }
       const nextTime = new Date().toLocaleTimeString('es-ES', {
         hour: '2-digit',
         minute: '2-digit',
@@ -173,14 +161,12 @@ export default function DashboardView({
       });
       const nextItem = {
         time: nextTime,
-        // The legacy mock chart used two arbitrary "tcp"/"udp"
-        // series; we re-use those keys so the AreaChart keeps
-        // rendering without any prop changes. `tcp` carries bytes/s,
-        // `udp` carries packets/s. Future plans (Plan 4 / 5) will
-        // replace these series with per-protocol breakdowns.
+        // `tcp` carries bytes/s, `udp` carries packets/s.
+        // Future plans will replace these series with
+        // per-protocol breakdowns.
         tcp: Math.max(0, metrics.bytes_per_sec),
         udp: Math.max(0, metrics.packets_per_sec),
-        other: last?.other ?? 0,
+        other: 0,
       };
       return prev.length >= TRAFFIC_WINDOW
         ? [...prev.slice(1), nextItem]
@@ -360,7 +346,10 @@ export default function DashboardView({
                         [↗]
                       </button>
                     ) : (
-                      <span className="text-[#5c6473] font-mono text-sm">[]</span>
+                      <span className={kpi.color || 'text-[#5c6473]'}>
+                        {kpi.icon === 'Activity' && <Activity className="h-4 w-4" />}
+                        {kpi.icon === 'Database' && <Database className="h-4 w-4" />}
+                      </span>
                     )}
                   </div>
                   <div className="mt-2.5 flex items-baseline gap-2.5">
@@ -409,7 +398,7 @@ export default function DashboardView({
           </div>
 
           <div className="h-56 w-full font-mono text-xs">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height={224} minWidth={0}>
               <AreaChart
                 data={trafficData}
                 margin={{ top: 5, right: 10, left: -20, bottom: 0 }}

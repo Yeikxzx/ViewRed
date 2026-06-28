@@ -57,3 +57,14 @@ onnxruntime.dylib
 
 # OUI database (downloaded on first run)
 oui.txt
+
+# Screenshots and design exports
+*.png
+*.svg
+designs/
+
+# Playwright test artifacts
+.playwright-mcp/
+
+# SDD change artifacts (openspec)
+openspec/config.yaml

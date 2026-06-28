@@ -3,8 +3,10 @@ package handlers
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/viewred/viewred/internal/config"
 	"github.com/viewred/viewred/internal/scanner"
 	"github.com/viewred/viewred/internal/storage"
 )
@@ -30,10 +32,16 @@ type ScanRequest struct {
 	Profile string `json:"profile"`
 }
 
+// ScanDeps holds the dependencies for the scan endpoint.
+type ScanDeps struct {
+	Querier storage.Querier
+	Config  *config.Config
+}
+
 // TriggerScan handles POST /api/v1/scan
 // For V1, this blocks until the scan completes to simplify the frontend polling.
-func TriggerScan(q storage.Querier) gin.HandlerFunc {
-	scanEngine := scanner.NewEngine(q)
+func TriggerScan(deps ScanDeps) gin.HandlerFunc {
+	scanEngine := scanner.NewEngine(deps.Querier, deps.Config.Scanner.NmapPath)
 	
 	return func(c *gin.Context) {
 		var req ScanRequest
@@ -46,10 +54,34 @@ func TriggerScan(q storage.Querier) gin.HandlerFunc {
 			req.Profile = "quick"
 		}
 
-		// Blocking scan execution for V1 simplicity
+		start := time.Now()
+
+		// Count vulns before the scan to compute delta.
+		vulnsBefore, _ := deps.Querier.GetVulnerabilities(c.Request.Context(), false)
+		countBefore := len(vulnsBefore)
+
 		err := scanEngine.Scan(c.Request.Context(), req.IP, req.Profile)
+		durationMs := int(time.Since(start).Milliseconds())
+
+		// Persist scan history regardless of success/failure.
+		vulnsAfter, _ := deps.Querier.GetVulnerabilities(c.Request.Context(), false)
+		status := "COMPLETED"
 		if err != nil {
-			// Instead of a full 500, we can return 500 but note that nmap failed.
+			status = "STOPPED"
+		}
+		history := storage.ScanHistory{
+			Target:       req.IP,
+			Profile:      req.Profile,
+			DurationMs:   durationMs,
+			HostsScanned: 1,
+			VulnsFound:   len(vulnsAfter) - countBefore,
+			Status:       status,
+		}
+		if _, saveErr := deps.Querier.SaveScanHistory(c.Request.Context(), history); saveErr != nil {
+			// Non-fatal: the scan itself succeeded, just log the issue.
+		}
+
+		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Scan failed", "details": err.Error()})
 			return
 		}

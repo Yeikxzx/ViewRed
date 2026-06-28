@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/viewred/viewred/internal/storage"
@@ -40,9 +42,10 @@ const systemPrompt = `Eres un asistente de ciberseguridad especializado en ViewR
 - Asistente de SecOps para operadores de seguridad de redes industriales
 - Respondés en español rioplatense, con tono profesional pero accesible
 - Tus respuestas son concisas y técnicamente precisas
+- **Siempre respondés basándote en los datos reales que se te proporcionan abajo en "## Datos de tu red en tiempo real". Si la info no está ahí, decís que no tenés esos datos en lugar de inventarlos.**
 
 ## ViewRed — Stack
-- Backend: Go, PostgreSQL + TimescaleDB, chi router, SSE broker
+- Backend: Go, PostgreSQL + TimescaleDB, Gin router, SSE broker
 - Frontend: React 19, TypeScript, Zustand, Recharts
 - Captura: Npcap (Windows) / AF_PACKET (Linux)
 
@@ -69,6 +72,85 @@ const systemPrompt = `Eres un asistente de ciberseguridad especializado en ViewR
 - Describir patrones de tráfico anómalo
 - Ayudar con configuración de reglas de detección
 - NO ejecutás comandos ni modificás configuraciones — solo asesorás`;
+
+// buildNetworkContext queries the database and returns a plain-text summary
+// of the current network state (vulnerabilities, devices, alerts) that is
+// appended to the system prompt so the model responds with real data.
+func buildNetworkContext(ctx context.Context, q storage.Querier) string {
+	var sb strings.Builder
+	now := time.Now()
+	// Usamos formato sin segundos para favorecer el cacheo del prompt (KV cache de Ollama)
+	sb.WriteString(fmt.Sprintf("\n\n## Datos de tu red en tiempo real (actualizado: %s)\n", now.Format("2006-01-02 15:04")))
+
+	// --- Vulnerabilidades ---
+	vulns, err := q.GetVulnerabilities(ctx, false)
+	if err == nil && len(vulns) > 0 {
+		sb.WriteString(fmt.Sprintf("\n### Vulnerabilidades activas (%d encontradas)\n", len(vulns)))
+		count := 20
+		if len(vulns) < count {
+			count = len(vulns)
+		}
+		for _, v := range vulns[:count] {
+			score := "N/A"
+			if v.CVSSScore != nil {
+				score = fmt.Sprintf("%.1f", *v.CVSSScore)
+			}
+			cve := "N/A"
+			if v.CVEID != nil {
+				cve = *v.CVEID
+			}
+			port := "N/A"
+			if v.Port != nil {
+				port = fmt.Sprintf("%d", *v.Port)
+			}
+			sb.WriteString(fmt.Sprintf("- IP: %s | Puerto: %s | %s | CVSS: %s | %s\n",
+				v.DeviceIP, port, cve, score, truncateText(v.Description, 100)))
+		}
+	} else {
+		sb.WriteString("\n### Vulnerabilidades\nNo se detectaron vulnerabilidades activas.\n")
+	}
+
+	// --- Dispositivos ---
+	devices, totalDevices, err := q.QueryDevices(ctx, storage.DeviceFilter{Limit: 30, Offset: 0})
+	if err == nil && len(devices) > 0 {
+		sb.WriteString(fmt.Sprintf("\n### Dispositivos en la red (%d en total, listando un máximo de %d)\n", totalDevices, len(devices)))
+		for _, d := range devices {
+			host := d.Hostname
+			if host == "" {
+				host = "sin hostname"
+			}
+			sb.WriteString(fmt.Sprintf("- IP: %s | MAC: %s | Vendor: %s | Hostname: %s | Ultima vez: %s\n",
+				d.IP, d.MAC, d.Vendor, host, d.LastSeen.Format("15:04")))
+		}
+	}
+
+	// --- Alertas recientes (última hora) ---
+	// We filter via AlertFilter with a limit; exact time filtering is
+	// handled by the alerts query (it returns most recent first).
+	alerts, totalAlerts, err := q.QueryAlerts(ctx, storage.AlertFilter{Limit: 15, Offset: 0})
+	if err == nil && len(alerts) > 0 {
+		sb.WriteString(fmt.Sprintf("\n### Alertas recientes (%d en total, mostrando %d)\n", totalAlerts, len(alerts)))
+		for _, a := range alerts {
+			desc := ""
+			if a.Description != nil {
+				desc = *a.Description
+			}
+			sb.WriteString(fmt.Sprintf("- [%s] %s | Origen: %s | Score: %.0f | %s\n",
+				a.Severity, a.Title, a.Source, a.Score, truncateText(desc, 120)))
+		}
+	} else {
+		sb.WriteString("\n### Alertas\nNo hay alertas activas en este momento.\n")
+	}
+
+	return sb.String()
+}
+
+func truncateText(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
 
 // LLMChatHandler proxies the chat request to a local Ollama instance
 // and streams the response back to the client using Server-Sent Events (SSE).
@@ -109,16 +191,29 @@ func LLMChatHandler(q storage.Querier) gin.HandlerFunc {
 		}
 
 		// Construct payload for Ollama.
-		// Prepend system prompt so the model has context about ViewRed.
+		// Build a system prompt with real-time network context so the
+		// model responds with actual data instead of inventing it.
+		networkCtx := buildNetworkContext(c.Request.Context(), q)
+		fullSystemPrompt := systemPrompt + networkCtx
+
+		// Trim the conversation history to the last N messages so the
+		// prompt stays within the model's context window. The user
+		// always gets their final question; older context is dropped.
+		const maxHistoryMessages = 20
+		historyMsgs := req.Messages
+		if len(historyMsgs) > maxHistoryMessages {
+			historyMsgs = historyMsgs[len(historyMsgs)-maxHistoryMessages:]
+		}
+
 		ollamaMessages := make([]struct {
 			Role    string `json:"role"`
 			Content string `json:"content"`
-		}, 0, len(req.Messages)+1)
+		}, 0, len(historyMsgs)+1)
 		ollamaMessages = append(ollamaMessages, struct {
 			Role    string `json:"role"`
 			Content string `json:"content"`
-		}{Role: "system", Content: systemPrompt})
-		ollamaMessages = append(ollamaMessages, req.Messages...)
+		}{Role: "system", Content: fullSystemPrompt})
+		ollamaMessages = append(ollamaMessages, historyMsgs...)
 
 		ollamaReq := OllamaRequest{
 			Model:    "qwen2.5:3b",

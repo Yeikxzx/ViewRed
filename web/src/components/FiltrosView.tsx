@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   Filter,
   Search,
@@ -6,6 +7,8 @@ import {
   Copy,
   ChevronRight,
   HelpCircle,
+  Cable,
+  Globe,
 } from 'lucide-react';
 import { CapturedPacket } from '../types';
 import { getPackets, PacketFilters } from '../lib/api';
@@ -43,6 +46,7 @@ function decodePayload(base64Str: string | null) {
 }
 
 export default function FiltrosView() {
+  const location = useLocation();
   const [filterType, setFilterType] = useState('ip.src');
   const [filterOperator, setFilterOperator] = useState('==');
   const [filterValue, setFilterValue] = useState('');
@@ -53,6 +57,26 @@ export default function FiltrosView() {
   const [selectedPacket, setSelectedPacket] = useState<CapturedPacket | null>(null);
   const [copiedHex, setCopiedHex] = useState(false);
   const [totalItems, setTotalItems] = useState(0);
+  // autoRefresh drives the polling interval below. The packets
+  // table is read-mostly (humans scan rows, they don't expect
+  // individual cells to mutate in front of them), so a 3-second
+  // poll is the right cadence: fast enough that a new packet
+  // appears within a few seconds, slow enough that the UI never
+  // feels jittery. SSE would be more "real-time" but is overkill
+  // for a paginated list — every new packet would race the active
+  // filter and risk duplicating or mis-ordering rows.
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  // isFetching drives the small "Actualizando..." pill in the
+  // header. Decoupled from autoRefresh so a manual refresh can
+  // also show the indicator.
+  const [isFetching, setIsFetching] = useState(false);
+
+  // REFRESH_INTERVAL_MS lives outside React because it's a
+  // configuration constant, not state. 3s is the default; tweak
+  // here if the network is fast enough that 1s is useful or slow
+  // enough that 5s is friendlier.
+  const REFRESH_INTERVAL_MS = 3000;
 
   const filterFields = [
     { value: 'ip.src', label: 'IP Origen' },
@@ -64,9 +88,10 @@ export default function FiltrosView() {
   ];
 
   const fetchPackets = async (customFilterValue = filterValue, customPayloadSearch = payloadSearch) => {
+    setIsFetching(true);
     try {
       const apiFilters: PacketFilters = { limit: 100 };
-      
+
       if (customPayloadSearch.trim() !== '') {
         apiFilters.payload_search = customPayloadSearch.trim();
       }
@@ -81,37 +106,133 @@ export default function FiltrosView() {
       }
 
       const res = await getPackets(apiFilters);
-      const mappedPackets: CapturedPacket[] = res.packets.map((p, idx) => {
+      // Deduplicate on the (time, 5-tuple) key. The backend
+      // currently returns the same packet twice when Npcap
+      // hands the same frame to the reader more than once
+      // (visible on busy flows — many TCP ACKs per
+      // microsecond). Without dedup, React's `key` warning
+      // fires and the table can render visually-duplicate rows.
+      // Set keyed by the content id is enough; collisions are
+      // rare enough that we just keep the first occurrence.
+      const seen = new Set<string>();
+      const mappedPackets: CapturedPacket[] = [];
+      res.packets.forEach((p, idx) => {
+        // Stable, content-based id. We previously derived the
+        // id from `res.total - res.offset - idx`, which looked
+        // fine in isolation but shifted every time a new
+        // packet was captured: `total` grew by 1, every
+        // existing packet's id moved by 1, and the user's
+        // selection (keyed on the old id) silently failed to
+        // match anything in the refreshed list. The detail
+        // panel then "jumped" to whichever packet happened to
+        // land at index 0 (newest). The time field is a
+        // microsecond timestamp, effectively unique per packet,
+        // and the IP+port combo is a tie-breaker that survives
+        // any clock weirdness. Critically, the id is computed
+        // from the packet itself, not from the surrounding
+        // pagination state, so refreshes never shift it.
+        const id = `${p.time}|${p.src_ip}|${p.src_port}|${p.dst_ip}|${p.dst_port}|${p.protocol}`;
+        if (seen.has(id)) return;
+        seen.add(id);
         const { hexDump, asciiDump } = decodePayload(p.payload_preview);
-        return {
-          id: res.total - res.offset - idx,
+        mappedPackets.push({
+          id,
+          // Display-only number, used in the "NO." column so
+          // the UI still shows a sequential-looking identifier
+          // like the old (position-based) implementation did.
+          // Decoupled from the React key on purpose: shifting
+          // this on refreshes would be harmless (it's just a
+          // label), but we also recompute it from
+          // `res.total - idx` so the visual number stays
+          // monotonically decreasing from top to bottom.
+          number: res.total - idx,
           time: new Date(p.time).toISOString().split('T')[1].slice(0, 12),
           source: p.src_ip,
           destination: p.dst_ip,
+          sourceHostname: p.src_hostname,
+          destinationHostname: p.dst_hostname,
           protocol: p.protocol,
           length: p.length,
           info: `Puerto ${p.src_port} -> ${p.dst_port}`,
           hexDump,
           asciiDump
-        };
+        });
       });
 
       setPacketsQueue(mappedPackets);
       setTotalItems(res.total);
-      if (mappedPackets.length > 0) {
-        setSelectedPacket(mappedPackets[0]);
-      } else {
-        setSelectedPacket(null);
-      }
+      setLastRefresh(new Date());
+
+      // Preserve the user's row selection across refreshes.
+      // The id is content-based (time + 5-tuple + protocol) so
+      // it's stable even when the pagination window shifts.
+      //
+      // Three cases:
+      //  1. Selected packet is still in the new list → reuse
+      //     the fresh row (so the detail panel always shows
+      //     up-to-date data) but keep the original `number`
+      //     the user clicked. The number is recomputed every
+      //     fetch from `total - idx`, so it would otherwise
+      //     shift on every refresh; sticking to the originally
+      //     clicked number keeps the detail panel header
+      //     visually stable, which matches user expectation
+      //     ("I clicked #377289, the detail should still say
+      //     #377289").
+      //  2. Selected packet has scrolled off the top-N window
+      //     (e.g. several thousand new packets arrived faster
+      //     than the 3s poll) → keep the previously-stored
+      //     packet object so the detail panel still shows its
+      //     info. Without this guard, the old behaviour was to
+      //     fall back to mappedPackets[0] on every refresh,
+      //     which is what the user reported: "the detail panel
+      //     jumps to a different packet on every refresh".
+      //  3. Nothing was ever selected (initial load, or after
+      //     a filter reset) → default to the first row of the
+      //     new list.
+      setSelectedPacket(prev => {
+        if (prev) {
+          const stillThere = mappedPackets.find(p => p.id === prev.id);
+          if (stillThere) {
+            // Same packet, fresh data, but pin the number the
+            // user originally clicked so the detail header
+            // doesn't appear to "change packet" on every poll.
+            return { ...stillThere, number: prev.number };
+          }
+          return prev; // keep the selection, even if off-page
+        }
+        return mappedPackets.length > 0 ? mappedPackets[0] : null;
+      });
     } catch (e) {
       console.error(e);
+    } finally {
+      setIsFetching(false);
     }
   };
 
+  // One-shot fetch on mount so the table is never empty when the
+  // user lands on the view. Lives in its own effect so it doesn't
+  // re-run when the user toggles autoRefresh or edits a filter
+  // input (those paths trigger their own fetch).
   useEffect(() => {
     fetchPackets();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Auto-refresh: when the toggle is on, poll the packets endpoint
+  // every REFRESH_INTERVAL_MS. The interval captures filterValue
+  // and payloadSearch via closure, so the user can change a
+  // filter and either click "Aplicar" (immediate fetch) or wait
+  // for the next tick (the change will be picked up
+  // automatically). The cleanup clears the interval so we don't
+  // leak timers on unmount or on a toggle-off.
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const interval = setInterval(() => {
+      fetchPackets();
+    }, REFRESH_INTERVAL_MS);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRefresh]);
 
   const handleApplyVisualFilter = () => {
     let expr = '';
@@ -124,6 +245,40 @@ export default function FiltrosView() {
     setActiveFilterString(expr);
     fetchPackets(filterValue, payloadSearch);
   };
+
+  // Process location state on mount
+  useEffect(() => {
+    const query = (location.state as any)?.query;
+    if (query) {
+      const cleanQuery = query.trim();
+      const isIP = /^[0-9]{1,3}(\.[0-9]{1,3}){3}$/.test(cleanQuery);
+      
+      let newFilterValue = filterValue;
+      let newPayloadSearch = payloadSearch;
+      let newFilterType = filterType;
+      
+      if (isIP) {
+        newFilterType = 'ip.src';
+        setFilterType(newFilterType);
+        setFilterValue(cleanQuery);
+        newFilterValue = cleanQuery;
+      } else {
+        setPayloadSearch(cleanQuery);
+        newPayloadSearch = cleanQuery;
+      }
+      
+      let expr = '';
+      if (newFilterValue.trim()) {
+        expr = `${newFilterType} ${filterOperator} ${newFilterValue}`;
+      }
+      if (newPayloadSearch.trim()) {
+        expr += expr ? ` && payload contains '${newPayloadSearch}'` : `payload contains '${newPayloadSearch}'`;
+      }
+      setActiveFilterString(expr);
+      fetchPackets(newFilterValue, newPayloadSearch);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   const handleResetFilters = () => {
     setActiveFilterString('');
@@ -240,18 +395,66 @@ export default function FiltrosView() {
 
         {/* Results grid Table */}
         <div className="bg-[#131820] border border-[#2a3242] p-4 rounded-lg">
-          <div className="flex justify-between items-center pb-2.5 mb-3 border-b border-[#2a3242]">
+          <div className="flex justify-between items-center pb-2.5 mb-3 border-b border-[#2a3242] gap-4">
             <span className="text-xs font-sans font-bold text-[#e4e7eb]">
               Resultados de Captura (Total: {totalItems} paquetes)
             </span>
-            <span className="text-[10px] font-mono text-[#5c6473]">
-              Mostrando {packetsQueue.length}
-            </span>
+            <div className="flex items-center gap-3">
+              {/* Live / Paused indicator + manual refresh button.
+                  Toggling autoRefresh re-creates the polling
+                  interval in the useEffect above, so the UI
+                  always reflects what the effect is actually
+                  doing. The pulsing dot uses Tailwind's built-in
+                  animate-pulse so we don't ship a keyframe. */}
+              <button
+                onClick={() => setAutoRefresh(v => !v)}
+                className={`flex items-center gap-1.5 text-[10px] font-mono px-2 py-1 rounded border transition-colors ${
+                  autoRefresh
+                    ? 'text-[#10b981] border-[#10b981]/40 bg-[#10b981]/10 hover:bg-[#10b981]/20'
+                    : 'text-[#5c6473] border-[#2a3242] hover:text-[#e4e7eb] hover:border-[#3a4356]'
+                }`}
+                title={autoRefresh ? 'Pausar auto-refresh' : 'Reanudar auto-refresh'}
+              >
+                {autoRefresh ? (
+                  <>
+                    <span className="w-1.5 h-1.5 bg-[#10b981] rounded-full animate-pulse" />
+                    LIVE · {REFRESH_INTERVAL_MS / 1000}s
+                  </>
+                ) : (
+                  <>
+                    <span className="w-1.5 h-1.5 bg-[#5c6473] rounded-full" />
+                    PAUSADO
+                  </>
+                )}
+              </button>
+              {/* Manual refresh is always available, even when
+                  auto-refresh is on — useful for "I just clicked
+                  something, show me now" without waiting for the
+                  next tick. */}
+              <button
+                onClick={() => fetchPackets()}
+                disabled={isFetching}
+                className="text-[10px] font-mono text-[#9ba3b4] hover:text-[#e4e7eb] disabled:text-[#5c6473] disabled:cursor-not-allowed"
+                title="Refrescar ahora"
+              >
+                <span className={isFetching ? 'animate-pulse' : ''}>
+                  {isFetching ? 'Actualizando…' : '↻ Refrescar'}
+                </span>
+              </button>
+              {lastRefresh && (
+                <span className="text-[10px] font-mono text-[#5c6473]" title={lastRefresh.toISOString()}>
+                  · {lastRefresh.toLocaleTimeString()}
+                </span>
+              )}
+              <span className="text-[10px] font-mono text-[#5c6473] ml-2">
+                Mostrando {packetsQueue.length}
+              </span>
+            </div>
           </div>
 
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto max-h-[480px] overflow-y-auto">
             <table className="w-full select-none text-left">
-              <thead>
+              <thead className="sticky top-0 bg-[#131820] z-10">
                 <tr className="border-b border-[#2a3242] text-[10px] font-mono font-bold text-[#5c6473] uppercase tracking-wider">
                   <th className="py-2 px-3">No.</th>
                   <th className="py-2 px-3">Tiempo</th>
@@ -271,10 +474,24 @@ export default function FiltrosView() {
                       selectedPacket?.id === pkt.id ? 'bg-[#1c2230]' : ''
                     }`}
                   >
-                    <td className="py-2.5 px-3 text-[#5c6473]">{pkt.id}</td>
+                    <td className="py-2.5 px-3 text-[#5c6473]">{pkt.number}</td>
                     <td className="py-2.5 px-3 text-[#9ba3b4]">{pkt.time}</td>
-                    <td className="py-2.5 px-3 text-[#e4e7eb]">{pkt.source}</td>
-                    <td className="py-2.5 px-3 text-[#e4e7eb]">{pkt.destination}</td>
+                    <td className="py-2.5 px-3">
+                      <div className="text-[#e4e7eb]">{pkt.source}</div>
+                      {pkt.sourceHostname && (
+                        <div className="text-[10px] text-[#06b6d4] truncate max-w-[140px]" title={pkt.sourceHostname}>
+                          {pkt.sourceHostname}
+                        </div>
+                      )}
+                    </td>
+                    <td className="py-2.5 px-3">
+                      <div className="text-[#e4e7eb]">{pkt.destination}</div>
+                      {pkt.destinationHostname && (
+                        <div className="text-[10px] text-[#06b6d4] truncate max-w-[140px]" title={pkt.destinationHostname}>
+                          {pkt.destinationHostname}
+                        </div>
+                      )}
+                    </td>
                     <td className="py-2.5 px-3">
                       <span
                         className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
@@ -308,7 +525,7 @@ export default function FiltrosView() {
             <div>
               <div className="flex justify-between items-center border-b border-[#2a3242] pb-2.5 mb-3.5">
                 <h2 className="font-sans font-bold text-sm text-[#e4e7eb] tracking-tight">
-                  Detalles del Paquete #{selectedPacket.id}
+                  Detalles del Paquete #{selectedPacket.number}
                 </h2>
                 <button
                   onClick={handleCopyHex}
@@ -324,7 +541,10 @@ export default function FiltrosView() {
                 {/* Physical Frame info */}
                 <details open className="group">
                   <summary className="outline-none filter brightness-90 hover:brightness-110 cursor-pointer text-[#e4e7eb] font-semibold list-none flex items-center justify-between">
-                    <span>💡 Frame {selectedPacket.id}: {selectedPacket.length} bytes on wire</span>
+                    <span className="flex items-center gap-2">
+                      <Cable className="h-3.5 w-3.5 text-amber-500" />
+                      Frame {selectedPacket.number}: {selectedPacket.length} bytes on wire
+                    </span>
                     <ChevronRight className="h-3.5 w-3.5 text-[#5c6473] transform group-open:rotate-90 transition-transform" />
                   </summary>
                   <p className="pl-4 text-[#9ba3b4] text-[11px] mt-1 space-y-0.5">
@@ -336,33 +556,75 @@ export default function FiltrosView() {
 
                 <details open className="group">
                   <summary className="outline-none filter brightness-90 hover:brightness-110 cursor-pointer text-[#e4e7eb] font-semibold list-none flex items-center justify-between">
-                    <span>🌐 Internet Protocol</span>
+                    <span className="flex items-center gap-2">
+                      <Globe className="h-3.5 w-3.5 text-cyan-400" />
+                      Internet Protocol
+                    </span>
                     <ChevronRight className="h-3.5 w-3.5 text-[#5c6473] transform group-open:rotate-90 transition-transform" />
                   </summary>
                   <div className="pl-4 text-[#9ba3b4] text-[11px] mt-1 font-mono leading-tight space-y-0.5">
-                    <div>• Source IP: {selectedPacket.source}</div>
-                    <div>• Destination IP: {selectedPacket.destination}</div>
+                    <div>
+                      • Source IP: {selectedPacket.source}
+                      {selectedPacket.sourceHostname && (
+                        <span className="text-[#06b6d4] ml-2">({selectedPacket.sourceHostname})</span>
+                      )}
+                    </div>
+                    <div>
+                      • Destination IP: {selectedPacket.destination}
+                      {selectedPacket.destinationHostname && (
+                        <span className="text-[#06b6d4] ml-2">({selectedPacket.destinationHostname})</span>
+                      )}
+                    </div>
                   </div>
                 </details>
               </div>
 
-              {/* Standard Side-by-Side Hex and ASCII viewer. Absolutely gorgeous! */}
+              {/* Hex + ASCII viewer in the Wireshark "two-line" layout:
+                  each row is two stacked lines — the hex bytes on
+                  top, the printable ASCII on the bottom. Two lines
+                  instead of three side-by-side columns means the
+                  ASCII column gets the full content width to
+                  itself, so even printable runs longer than the
+                  hex view (URLs, base64-ish blobs, escaped JSON)
+                  stay readable without horizontal scroll on a
+                  narrow detail panel. The offset lives on the
+                  hex line; the ASCII line is indented to align
+                  visually under the bytes, which is the same
+                  convention Wireshark and tcpdump -X use. */}
               <div className="space-y-1.5 text-left">
                 <span className="text-[10px] uppercase tracking-wider font-bold text-[#5c6473] font-mono block">
                   Hex Dump & ASCII View
                 </span>
-                <div className="bg-[#0a0e14] border border-[#2a3242] rounded p-2.5 font-mono text-[10px] leading-relaxed text-[#06b6d4] overflow-x-auto whitespace-pre h-72">
-                  <span className="text-amber-500 font-bold block pb-1 border-b border-[#2a3242]/40 mb-1.5">
-                    OFFSET    HEXADECIMAL BYTES                 ASCII DECODED
-                  </span>
+                <div className="bg-[#0a0e14] border border-[#2a3242] rounded p-2.5 font-mono text-[10px] leading-relaxed text-[#06b6d4] overflow-x-auto h-72">
+                  <div className="text-amber-500 font-bold pb-1.5 mb-1 border-b border-[#2a3242]/40">
+                    <span className="inline-block w-12">OFFSET</span>
+                    <span>HEXADECIMAL BYTES</span>
+                  </div>
                   {selectedPacket.hexDump.split('\n').map((line, idx) => {
                     if (!line.trim()) return null;
                     const asciiLine = selectedPacket.asciiDump.split('\n')[idx] || '';
                     return (
-                      <div key={idx} className="flex justify-between font-mono gap-1 hover:bg-[#131820] py-0.5 rounded px-1">
-                        <span className="text-[#5c6473] select-none">{(idx * 16).toString(16).padStart(4, '0')}</span>
-                        <span className="text-[#e4e7eb]">{line.substring(2)}</span>
-                        <span className="text-gray-500 border-l border-[#2a3242] pl-2">{asciiLine}</span>
+                      <div key={idx} className="hover:bg-[#131820] py-0.5 rounded px-1">
+                        <div className="flex gap-3">
+                          <span className="text-[#5c6473] select-none w-12 flex-shrink-0">
+                            {(idx * 16).toString(16).padStart(4, '0')}
+                          </span>
+                          <span className="text-[#e4e7eb] whitespace-pre">
+                            {/* hex line has a leading "00 " that
+                                the offset visually replaces; strip
+                                it so the bytes line up under the
+                                header's HEXADECIMAL column */}
+                            {line.replace(/^00\s/, '')}
+                          </span>
+                        </div>
+                        <div className="flex gap-3">
+                          {/* empty offset column on the ASCII
+                              line keeps the rows aligned */}
+                          <span className="w-12 flex-shrink-0" />
+                          <span className="text-gray-400 whitespace-pre">
+                            {asciiLine || ' '}
+                          </span>
+                        </div>
                       </div>
                     );
                   })}

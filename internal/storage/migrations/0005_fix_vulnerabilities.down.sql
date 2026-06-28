@@ -1,0 +1,3 @@
+-- 0005_fix_vulnerabilities.down.sql
+-- Restores the previous state (table dropped — nothing to restore).
+-- The original 0003 migration would recreate on next up.

@@ -89,11 +89,17 @@ function stubFetchSequence(responses: Array<Response | Error>) {
   let bootCount = 0;
   let respIdx = 0;
   const mock = vi.fn((url: string) => {
-    // Handle the two boot requests transparently (fresh Response each time)
-    if (bootCount < 2 && typeof url === 'string' &&
-        (url.includes('/interfaces') || url.includes('/capture/config'))) {
+    // Handle the three boot requests transparently (fresh Response each time):
+    // - /api/v1/interfaces
+    // - /api/v1/capture/config
+    // - /api/v1/packets (used by the storage history effect)
+    if (bootCount < 3 && typeof url === 'string' &&
+        (url.includes('/interfaces') || url.includes('/capture/config') || url.includes('/packets'))) {
       bootCount++;
-      const body = url.includes('/interfaces') ? [] : { interface: '', bpf: '', snaplen: 65535 };
+      let body: unknown;
+      if (url.includes('/interfaces')) body = [];
+      else if (url.includes('/capture/config')) body = { interface: '', bpf: '', snaplen: 65535 };
+      else body = { packets: [], total: 0, limit: 500, offset: 0 };
       return Promise.resolve(jsonResponse(body));
     }
     const next = responses[respIdx++];

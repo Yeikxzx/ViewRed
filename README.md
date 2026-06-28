@@ -23,14 +23,29 @@
 
 ### Prerrequisitos
 
-| Herramienta | Versión | Para qué |
-|---|---|---|
-| Go | 1.25+ | Backend |
-| Node.js | 22+ | Frontend |
-| pnpm | 9+ | Frontend |
-| Docker | Cualquiera | Base de datos (PostgreSQL + TimescaleDB) |
-| PostgreSQL 15+ | Con TimescaleDB | Almacenamiento |
-| make | Opcional | Comandos helper |
+| Herramienta | Versión | Plataforma | Para qué |
+|---|---|---|---|
+| Go | 1.25+ | Windows / Linux | Backend |
+| Node.js | 22+ | Windows / Linux | Frontend |
+| pnpm | 9+ | Windows / Linux | Frontend |
+| Npcap | [última estable](https://npcap.com/#download) | Windows | Captura de paquetes (gopacket) |
+| libpcap-dev | `apt install libpcap-dev` | Linux (Debian/Ubuntu) | Captura de paquetes (gopacket) |
+| libpcap-devel | `dnf install libpcap-devel` | Linux (RHEL/Fedora) | Captura de paquetes (gopacket) |
+| nmap | En `PATH` | Windows / Linux | Escaneo de vulnerabilidades |
+| ONNX Runtime | 1.19.2 (verificada 2026-06-28) | Windows / Linux | Inferencia de modelos ML |
+| Docker | Cualquiera | Windows / Linux | Base de datos (PostgreSQL + TimescaleDB) |
+| PostgreSQL 15+ | Con TimescaleDB | Windows / Linux | Almacenamiento |
+| make | Opcional | Windows / Linux | Comandos helper |
+
+**Notas de compatibilidad:**
+
+- `CGO_ENABLED=1` es obligatorio para compilar el backend porque el runtime de ONNX se enlaza vía CGO. En Windows usá un toolchain compatible (por ejemplo, MinGW-w64 via `choco install mingw`).
+- La biblioteca de ONNX Runtime tiene que estar disponible en tiempo de ejecución:
+  - **Windows:** `onnxruntime.dll` en la raíz del repo o en un directorio del `PATH`.
+  - **Linux:** `libonnxruntime.so` en el `LD_LIBRARY_PATH` o en rutas del sistema como `/usr/local/lib`.
+- La captura de paquetes depende de Npcap en Windows y de libpcap en Linux. Sin estas bibliotecas el backend compila, pero la captura en vivo falla.
+- El escáner invoca `nmap` como proceso externo; si no está en `PATH`, las funciones de vulnerabilidades devuelven error.
+- El frontend se construye exclusivamente con `pnpm`; `npm` y `yarn` no están soportados en este repo.
 
 ### 1. Clonar e instalar
 

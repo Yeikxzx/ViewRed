@@ -98,7 +98,7 @@ func RestartCapture(deps CaptureConfigDeps) gin.HandlerFunc {
 
 		// Stop the old capture. This closes the Packets() channel and
 		// causes the existing bridge goroutine in main.go to exit.
-		if err := h.Capturer.Stop(); err != nil {
+		if err := h.Capturer.Stop(); err != nil && err.Error() != "npcap: not running" {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to stop capture: " + err.Error()})
 			return
 		}
@@ -137,5 +137,89 @@ func RestartCapture(deps CaptureConfigDeps) gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusOK, gin.H{"message": "Capture restarted successfully with interface " + iface})
+	}
+}
+
+// StoragePolicy represents the storage policy configuration
+// returned by the GET /api/v1/capture/storage-policy endpoint
+// and accepted by the POST variant.
+type StoragePolicy struct {
+	MaxPcapSizeMB  int `json:"max_pcap_size_mb"`
+	MaxPcapAgeHours int `json:"max_pcap_age_hours"`
+}
+
+// GetStoragePolicy handles GET /api/v1/capture/storage-policy.
+// Returns the current pcap rotation and retention settings from config.
+func GetStoragePolicy(deps CaptureConfigDeps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		cfg := deps.Config.Capture
+		c.JSON(http.StatusOK, StoragePolicy{
+			MaxPcapSizeMB:   cfg.MaxPcapSizeMB,
+			MaxPcapAgeHours: cfg.MaxPcapAgeHours,
+		})
+	}
+}
+
+// UpdateStoragePolicy handles POST /api/v1/capture/storage-policy.
+// Updates the pcap rotation and retention settings in the config file.
+// The new values take effect on the next capture restart.
+func UpdateStoragePolicy(deps CaptureConfigDeps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req StoragePolicy
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
+			return
+		}
+
+		if req.MaxPcapSizeMB < 1 {
+			req.MaxPcapSizeMB = 1
+		}
+		if req.MaxPcapAgeHours < 1 {
+			req.MaxPcapAgeHours = 1
+		}
+
+		deps.Config.Capture.MaxPcapSizeMB = req.MaxPcapSizeMB
+		deps.Config.Capture.MaxPcapAgeHours = req.MaxPcapAgeHours
+		if err := deps.Config.Save(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save configuration: " + err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, StoragePolicy{
+			MaxPcapSizeMB:   deps.Config.Capture.MaxPcapSizeMB,
+			MaxPcapAgeHours: deps.Config.Capture.MaxPcapAgeHours,
+		})
+	}
+}
+
+// StopCapture handles POST /api/v1/capture/stop.
+// Stops capture and leaves it stopped — no restart.
+func StopCapture(deps CaptureConfigDeps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		h := deps.Capture
+		if h == nil || h.Capturer == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Capture not available"})
+			return
+		}
+
+		if err := h.Capturer.Stop(); err != nil {
+			if err.Error() == "npcap: not running" || err.Error() == "afpacket: not running" {
+				c.JSON(http.StatusOK, gin.H{"message": "Capture already stopped"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to stop capture: " + err.Error()})
+			return
+		}
+
+		// Broadcast paused status.
+		if statusJSON, err := json.Marshal(map[string]string{"status": "paused"}); err == nil {
+			h.Broker.Broadcast(sse.Event{
+				Name:  "capture-status",
+				Topic: "capture-status",
+				Data:  statusJSON,
+			})
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "Capture stopped"})
 	}
 }

@@ -24,6 +24,14 @@ type PacketEvent struct {
 	PayloadPreview []byte // truncated to N bytes (configurable)
 	Hostname       string // populated by DHCP or mDNS
 	IsDiscovery    bool   // true if this packet contains discovery info (ARP/DHCP/mDNS)
+	// DNSAnswers carries one entry per A/AAAA record in a DNS
+	// response packet. Empty for non-DNS traffic. The resolver
+	// package consumes these to build a process-local IP→hostname
+	// cache; we keep them on the event itself (rather than calling
+	// into the resolver from the capture path) so the capture
+	// pipeline stays single-purpose and the resolver is testable
+	// in isolation.
+	DNSAnswers []DNSAnswer
 }
 
 // CaptureStats reports the current state of a PacketCapture implementation.

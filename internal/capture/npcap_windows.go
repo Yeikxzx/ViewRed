@@ -61,10 +61,14 @@ func (c *NpcapCapture) Start(iface string, bpfFilter string) error {
 		}
 	}
 
+	// Recreate stop channel for this run so it can be stopped again
+	c.stopCh = make(chan struct{})
+
 	c.iface = iface
 	c.filter = bpfFilter
 	c.handle = handle
 	c.stats.StartedAt = time.Now()
+	c.stats.LastError = nil // clear stale error from prior run
 	c.running = true
 
 	go c.readLoop()

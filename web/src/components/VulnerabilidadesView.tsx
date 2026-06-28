@@ -13,8 +13,8 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { Vulnerability, ScanHistory, ViewType } from '../types';
-import { initialVulnerabilities, initialScanHistory } from '../data/mockData';
-import { triggerScan } from '../lib/api';
+import { initialVulnerabilities } from '../data/mockData';
+import { triggerScan, getScanHistory } from '../lib/api';
 import { toast } from 'sonner';
 
 interface VulnerabilidadesViewProps {
@@ -32,7 +32,7 @@ export default function VulnerabilidadesView({
   setSelectedDeviceIP,
   refreshVulnerabilities,
 }: VulnerabilidadesViewProps) {
-  const [severityFilter, setSeverityFilter] = useState<'ALL' | 'CRITICAL' | 'HIGH' | 'MEDIUM'>('ALL');
+  const [severityFilter, setSeverityFilter] = useState<'ALL' | 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'INFO'>('ALL');
   const [targetQuery, setTargetQuery] = useState(selectedDeviceIP || '192.168.1.0/24');
   const [scanProfile, setScanProfile] = useState('service-detect');
   const [scanScripts, setScanScripts] = useState(true);
@@ -41,13 +41,33 @@ export default function VulnerabilidadesView({
   const [scanInProgress, setScanInProgress] = useState(false);
   const [scanProgressPercent, setScanProgressPercent] = useState(0);
   const [hostsScannedCount, setHostsScannedCount] = useState(0);
-  const [statusText, setStatusText] = useState('');
+  const [elapsedTime, setElapsedTime] = useState(0);
+  const [statusText, setStatusText] = useState('Esperando configuración...');
 
-  const [localScansHistory, setLocalScansHistory] = useState<ScanHistory[]>(initialScanHistory);
+  const [localScansHistory, setLocalScansHistory] = useState<ScanHistory[]>([]);
   const [showExplanationModal, setShowExplanationModal] = useState(false);
   const [selectedVulnToExplain, setSelectedVulnToExplain] = useState<Vulnerability | null>(null);
   const [aiStreamingText, setAiStreamingText] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
+
+  // Load scan history from backend on mount
+  useEffect(() => {
+    getScanHistory(20).then((history) => {
+      setLocalScansHistory(history.map((h) => ({
+        id: h.id,
+        date: new Date(h.started_at).toLocaleDateString('es-ES', {
+          day: '2-digit', month: '2-digit', year: 'numeric',
+          hour: '2-digit', minute: '2-digit',
+        }),
+        target: h.target,
+        profile: h.profile,
+        duration: (h.duration_ms / 1000).toFixed(0) + 's',
+        hostsScanned: h.hosts_scanned,
+        vulnsFound: h.vulns_found,
+        status: h.status as 'COMPLETED' | 'STOPPED' | 'RUNNING',
+      })));
+    }).catch(console.error);
+  }, []);
 
   // Autofill target query if selected device IP changed
   useEffect(() => {
@@ -69,17 +89,25 @@ export default function VulnerabilidadesView({
     setScanInProgress(true);
     setScanProgressPercent(0);
     setHostsScannedCount(0);
+    setElapsedTime(0);
     setStatusText('Inicializando escáner Nmap y contactando objetivo...');
 
-    // Fake progress interval while waiting for backend
+    // Simulated progress while waiting for the backend. Instead of a
+    // hard cap at 90% (which makes the UI look stuck when nmap takes
+    // minutes with --script=vulners), we slow-walk toward 98% so the
+    // user sees movement even during slow CVE enumeration.
     let percent = 0;
-    const interval = setInterval(() => {
-      percent += 2;
-      if (percent > 90) percent = 90; // Wait at 90% until backend returns
-      setScanProgressPercent(percent);
-    }, 500);
-
+    let step = 5;
     const startTime = Date.now();
+    const interval = setInterval(() => {
+      percent = Math.min(percent + step, 98);
+      step = Math.max(step - 0.2, 1); // decelerate
+      setScanProgressPercent(Math.round(percent));
+      setElapsedTime(Math.floor((Date.now() - startTime) / 1000));
+      if (percent < 40) setStatusText('Ejecutando escaneo Nmap y descubriendo hosts...');
+      else if (percent < 70) setStatusText('Detectando servicios y versiones en puertos abiertos...');
+      else setStatusText('Analizando vulnerabilidades CVE con scripts NSE...');
+    }, 800);
 
     try {
       await triggerScan(targetQuery, scanProfile);
@@ -87,27 +115,30 @@ export default function VulnerabilidadesView({
       clearInterval(interval);
       setScanProgressPercent(100);
       setStatusText('Escaneo terminado de forma exitosa.');
-      
-      const durationStr = Math.round((Date.now() - startTime) / 1000) + 's';
 
-      // Insert new entry in local scan histories
-      const newHistory: ScanHistory = {
-        id: localScansHistory.length + 42,
-        date: 'Hoy, ' + new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
-        target: targetQuery,
-        profile: scanProfile === 'quick' ? 'Quick Scan' : scanProfile === 'full' ? 'Full Scan' : 'Service Detection',
-        duration: durationStr,
-        hostsScanned: 1,
-        vulnsFound: 0,
-        status: 'COMPLETED',
-      };
-      setLocalScansHistory([newHistory, ...localScansHistory]);
+      // Refresh scan history and vulnerabilities from the backend
+      const [history] = await Promise.all([
+        getScanHistory(20),
+        refreshVulnerabilities?.(),
+      ]);
+      if (history) {
+        // Map backend fields to the frontend ScanHistory shape
+        setLocalScansHistory(history.map((h) => ({
+          id: h.id,
+          date: new Date(h.started_at).toLocaleDateString('es-ES', {
+            day: '2-digit', month: '2-digit', year: 'numeric',
+            hour: '2-digit', minute: '2-digit',
+          }),
+          target: h.target,
+          profile: h.profile,
+          duration: (h.duration_ms / 1000).toFixed(0) + 's',
+          hostsScanned: h.hosts_scanned,
+          vulnsFound: h.vulns_found,
+          status: h.status as 'COMPLETED' | 'STOPPED' | 'RUNNING',
+        })));
+      }
       
       toast.success(`Escaneo completado para el objetivo ${targetQuery}`);
-      
-      if (refreshVulnerabilities) {
-        await refreshVulnerabilities();
-      }
     } catch (err: any) {
       clearInterval(interval);
       setStatusText('Error en el escaneo: ' + err.message);
@@ -139,8 +170,12 @@ export default function VulnerabilidadesView({
   };
 
   const filteredVulns = vulnerabilities.filter((v) => {
-    const matchesSeverity = severityFilter === 'ALL' || v.severity === severityFilter;
-    return matchesSeverity;
+    // "ALL" hides the noisy INFO-PORT entries (open ports) by default.
+    // Use the "INFO" filter to explicitly view them.
+    if (severityFilter === 'ALL') {
+      return v.severity !== 'INFO-PORT';
+    }
+    return v.severity === severityFilter;
   });
 
   return (
@@ -317,7 +352,7 @@ export default function VulnerabilidadesView({
                 </div>
                 <div className="flex justify-between text-[9px] font-mono text-[#5c6473]">
                   <span>Hosts escaneados: {hostsScannedCount}</span>
-                  <span>Tiempo transcurrido: ~32s</span>
+                  <span>Tiempo transcurrido: {elapsedTime}s</span>
                 </div>
               </div>
             </div>
@@ -333,7 +368,17 @@ export default function VulnerabilidadesView({
                 </div>
 
                 <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                  {localScansHistory.map((scan) => (
+                  {localScansHistory.length === 0 ? (
+                    <div className="bg-[#0a0e14] border border-dashed border-[#2a3242] rounded p-4 text-center">
+                      <span className="text-[10px] font-mono text-[#5c6473] block">
+                        Sin escaneos registrados.
+                      </span>
+                      <span className="text-[9px] font-mono text-[#5c6473] block mt-1">
+                        Inicia un escaneo para ver el historial.
+                      </span>
+                    </div>
+                  ) : (
+                    localScansHistory.map((scan) => (
                     <div
                       key={scan.id}
                       className="bg-[#0a0e14] border border-[#2a3242]/40 p-2 px-3 rounded text-xs flex justify-between items-center font-mono"
@@ -363,7 +408,8 @@ export default function VulnerabilidadesView({
                         </span>
                       </div>
                     </div>
-                  ))}
+                    ))
+                  )}
                 </div>
               </div>
 
@@ -396,7 +442,7 @@ export default function VulnerabilidadesView({
                 severityFilter === 'ALL' ? 'bg-[#1c2230] text-white font-semibold' : 'text-[#9ba3b4] hover:text-[#e4e7eb]'
               }`}
             >
-              TODAS ({vulnerabilities.length})
+              RELEVANTES
             </button>
             <button
               onClick={() => setSeverityFilter('CRITICAL')}
@@ -413,6 +459,14 @@ export default function VulnerabilidadesView({
               }`}
             >
               ALTAS ({vulnerabilities.filter((v) => v.severity === 'HIGH').length})
+            </button>
+            <button
+              onClick={() => setSeverityFilter('INFO')}
+              className={`px-2.5 py-1 rounded transition-all ${
+                severityFilter === 'INFO' ? 'bg-cyan-500 text-[#0a0e14] font-semibold' : 'text-[#9ba3b4] hover:text-[#e4e7eb]'
+              }`}
+            >
+              PUERTOS ({vulnerabilities.filter((v) => v.severity === 'INFO-PORT').length})
             </button>
           </div>
         </div>

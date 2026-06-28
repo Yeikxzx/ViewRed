@@ -148,24 +148,33 @@ func (w *Writer) insertBatch(ctx context.Context, batch []capture.PacketEvent) e
 		return nil
 	}
 
-	times := make([]time.Time, len(batch))
-	srcIPs := make([]string, len(batch))
-	dstIPs := make([]string, len(batch))
-	srcPorts := make([]int, len(batch))
-	dstPorts := make([]int, len(batch))
-	protocols := make([]string, len(batch))
-	lengths := make([]int, len(batch))
-	previews := make([][]byte, len(batch))
+	times := make([]time.Time, 0, len(batch))
+	srcIPs := make([]string, 0, len(batch))
+	dstIPs := make([]string, 0, len(batch))
+	srcPorts := make([]int, 0, len(batch))
+	dstPorts := make([]int, 0, len(batch))
+	protocols := make([]string, 0, len(batch))
+	lengths := make([]int, 0, len(batch))
+	previews := make([][]byte, 0, len(batch))
 
-	for i, e := range batch {
-		times[i] = e.Timestamp
-		srcIPs[i] = e.SrcIP
-		dstIPs[i] = e.DstIP
-		srcPorts[i] = int(e.SrcPort)
-		dstPorts[i] = int(e.DstPort)
-		protocols[i] = e.Protocol
-		lengths[i] = e.Length
-		previews[i] = e.PayloadPreview
+	for _, e := range batch {
+		// Skip rows with empty IPs — they cause a PostgreSQL inet parse
+		// error and are always invalid for packet capture.
+		if e.SrcIP == "" || e.DstIP == "" {
+			continue
+		}
+		times = append(times, e.Timestamp)
+		srcIPs = append(srcIPs, e.SrcIP)
+		dstIPs = append(dstIPs, e.DstIP)
+		srcPorts = append(srcPorts, int(e.SrcPort))
+		dstPorts = append(dstPorts, int(e.DstPort))
+		protocols = append(protocols, e.Protocol)
+		lengths = append(lengths, e.Length)
+		previews = append(previews, e.PayloadPreview)
+	}
+
+	if len(times) == 0 {
+		return nil
 	}
 
 	_, err := w.pool.Exec(ctx,
@@ -233,6 +242,11 @@ func (w *Writer) WriteAlert(ctx context.Context, alert Alert) error {
 func (w *Writer) UpsertDevice(ctx context.Context, dev Device) (int64, error) {
 	if w.pool == nil {
 		return 0, errStorageUnavailable
+	}
+	// Guard: reject empty IPs — they cause a PostgreSQL inet parse error
+	// and are always invalid for network discovery.
+	if dev.IP == "" {
+		return 0, fmt.Errorf("UpsertDevice: empty IP")
 	}
 
 	var id int64

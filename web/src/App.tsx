@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import DashboardView from './components/DashboardView';
@@ -10,12 +10,13 @@ import TopologiaView from './components/TopologiaView';
 import VulnerabilidadesView from './components/VulnerabilidadesView';
 import AsistenteView from './components/AsistenteView';
 import ConfiguracionView from './components/ConfiguracionView';
+import HistorialView from './components/HistorialView';
 import NotFoundView from './components/NotFoundView';
 import { Toaster, toast } from 'sonner';
 
 import { ViewType, NetworkAlert, Vulnerability, ChatMessage } from './types';
 import { llm, type Message } from './lib/llm';
-import { getRecentAlerts, acknowledgeAlert, AlertBackend } from './lib/api';
+import { getRecentAlerts, acknowledgeAlert, deleteAlert, clearAlerts, restartCapture, stopCapture, AlertBackend } from './lib/api';
 import { useSSE } from './lib/sse';
 import { useSSEStore } from './store/sse-store';
 import {
@@ -30,9 +31,44 @@ export default function App() {
   // Router <NavLink> components, so the Sidebar no longer reads
   // currentView/setView. Header and the view components still consume
   // them; a future task will remove the state entirely.
+  const navigate = useNavigate();
   const [currentView, setView] = useState<ViewType>('dashboard');
+  // Wraps setView so navigation also triggers a route change via React Router.
+  // All child components receive this wrapper instead of the raw setter.
+  const navigateToView = (v: ViewType) => { setView(v); navigate('/' + v); };
+
+  // Sync currentView from the URL whenever the route changes (catches
+  // sidebar NavLink clicks, browser back/forward, and any direct
+  // navigate() calls that bypass navigateToView).
+  const location = useLocation();
+  useEffect(() => {
+    const path = location.pathname.slice(1) as ViewType;
+    const validViews: string[] = ['dashboard', 'captura', 'historial', 'filtros', 'alertas', 'topologia', 'vulnerabilidades', 'asistente', 'configuracion'];
+    if (path && validViews.includes(path)) {
+      setView(path);
+    }
+  }, [location.pathname]);
+
   const [collapsed, setCollapsed] = useState(false);
-  const [isCapturing, setIsCapturing] = useState(true);
+  // Capture state is sourced from the SSE store (sse-store.ts). The
+  // backend reports it via /api/v1/stream/capture-status; this is the
+  // single source of truth so the UI and the real worker never drift.
+  const captureStatus = useSSEStore((s) => s.captureStatus);
+  const isCapturing = captureStatus === 'running' || captureStatus === 'unknown';
+  // We keep setIsCapturing in the toggle function signature so existing
+  // call sites still compile, but it is a no-op wrapper that actually
+  // calls the backend capture restart endpoint.
+  const toggleCapture = async () => {
+    try {
+      if (isCapturing) {
+        await stopCapture();
+      } else {
+        await restartCapture();
+      }
+    } catch (err) {
+      console.error('Failed to toggle capture', err);
+    }
+  };
 
   // Core App states
   const [devices, setDevices] = useState(initialDevices);
@@ -106,9 +142,6 @@ export default function App() {
   ]);
 
   // Actions handlers
-  const toggleCapture = () => {
-    setIsCapturing(!isCapturing);
-  };
 
   const handleAcknowledgeAlert = async (id: string) => {
     try {
@@ -119,6 +152,40 @@ export default function App() {
     } catch (err) {
       console.error('Failed to acknowledge alert', err);
     }
+  };
+
+  const handleDeleteAlert = async (id: string) => {
+    try {
+      await deleteAlert(id);
+      setAlerts((prev) => prev.filter((alert) => alert.id !== id));
+    } catch (err) {
+      console.error('Failed to delete alert', err);
+    }
+  };
+
+  const handleClearAlerts = () => {
+    // Custom in-app confirmation via toast action (no native dialog)
+    toast('¿Eliminar TODAS las alertas?', {
+      description: 'Esta accion no se puede deshacer.',
+      action: {
+        label: 'Eliminar todo',
+        onClick: async () => {
+          try {
+            await clearAlerts();
+            setAlerts([]);
+            toast.success('Todas las alertas eliminadas');
+          } catch (err) {
+            console.error('Failed to clear alerts', err);
+            toast.error('Error al eliminar las alertas');
+          }
+        },
+      },
+      cancel: {
+        label: 'Cancelar',
+        onClick: () => {},
+      },
+      duration: 10000,
+    });
   };
 
   const fetchVulnerabilities = async () => {
@@ -214,10 +281,10 @@ export default function App() {
           {/* Header telemetry top */}
           <Header
             currentView={currentView}
-            setView={setView}
+            setView={navigateToView}
             isCapturing={isCapturing}
             toggleCapture={toggleCapture}
-            openAIAssistant={() => setView('asistente')}
+            openAIAssistant={() => navigate('/asistente')}
           />
 
           {/* Dynamic view routes body content */}
@@ -227,8 +294,8 @@ export default function App() {
               <Route
                 path="/dashboard"
                 element={
-                  <DashboardView
-                    setView={setView}
+                   <DashboardView
+                    setView={navigateToView}
                     setSelectedAlert={setSelectedAlertToExplain}
                   />
                 }
@@ -237,6 +304,7 @@ export default function App() {
                 path="/captura"
                 element={<CapturaView isCapturing={isCapturing} toggleCapture={toggleCapture} />}
               />
+              <Route path="/historial" element={<HistorialView />} />
               <Route path="/filtros" element={<FiltrosView />} />
               <Route
                 path="/alertas"
@@ -244,8 +312,10 @@ export default function App() {
                   <AlertasView
                     alerts={alerts}
                     onAcknowledgeAlert={handleAcknowledgeAlert}
+                    onDeleteAlert={handleDeleteAlert}
+                    onClearAlerts={handleClearAlerts}
                     setSelectedAlertToExplain={setSelectedAlertToExplain}
-                    setView={setView}
+                    setView={navigateToView}
                   />
                 }
               />
@@ -253,8 +323,6 @@ export default function App() {
                 path="/topologia"
                 element={
                   <TopologiaView
-                    devices={devices}
-                    setView={setView}
                     setSelectedDeviceIP={setSelectedDeviceIP}
                   />
                 }

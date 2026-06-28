@@ -12,6 +12,32 @@ import (
 // cheap to allocate even at line rate.
 const payloadPreviewBytes = 64
 
+// DNSAnswer is one A or AAAA record observed in a DNS response.
+// The capture layer extracts these from every DNS packet and the
+// resolver package (internal/resolver) consumes them to build a
+// process-local IP→hostname cache. We carry the answer on the
+// PacketEvent itself rather than calling into the resolver
+// directly so the capture pipeline stays single-purpose and the
+// resolver is testable in isolation.
+type DNSAnswer struct {
+	// IP is the resolved address, in dotted-quad ("1.2.3.4") or
+	// canonical IPv6 form. Always set; the capture skips empty
+	// values rather than emitting "ip"="" entries.
+	IP string
+	// Hostname is the canonical name the client asked for. For
+	// CNAME chains the resolver would normally walk to the
+	// final A record's name, but we use the question's name
+	// when present so a YouTube request shows up as
+	// "youtube.com" rather than "youtube.com.cdn" or
+	// "googlevideo.com". Falls back to the answer's own name
+	// when the response carries no question.
+	Hostname string
+	// TTL is the DNS answer's time-to-live in seconds. The
+	// resolver clamps this to its own max; the raw value is
+	// preserved here for tests and observability.
+	TTL uint32
+}
+
 // packetToEvent converts a gopacket.Packet to our canonical PacketEvent
 // struct. It is platform-agnostic so the same conversion is used by the
 // Npcap (Windows) and AF_PACKET (Linux) drivers.
@@ -63,7 +89,12 @@ func packetToEvent(p gopacket.Packet) PacketEvent {
 		}
 	}
 
-	// Extract Discovery Hostnames (DHCP / mDNS)
+	// Extract Discovery Hostnames (DHCP / mDNS) and DNS A/AAAA
+	// answers for the IP→hostname cache. The same DNS layer is
+	// the source for both: DHCP packets embed the hostname in
+	// their options, mDNS answers carry PTR records, and
+	// regular DNS responses carry the A/AAAA records that the
+	// resolver package needs.
 	if dhcpLayer := p.Layer(layers.LayerTypeDHCPv4); dhcpLayer != nil {
 		dhcpL := dhcpLayer.(*layers.DHCPv4)
 		for _, opt := range dhcpL.Options {
@@ -75,12 +106,49 @@ func packetToEvent(p gopacket.Packet) PacketEvent {
 		}
 	} else if dnsLayer := p.Layer(layers.LayerTypeDNS); dnsLayer != nil {
 		dnsL := dnsLayer.(*layers.DNS)
-		if e.DstPort == 5353 { // mDNS
+
+		// mDNS PTR (port 5353) — a device announcing its own
+		// hostname. We surface this on the PacketEvent as a
+		// discovery hostname (existing behaviour) and ignore
+		// it as a service-resolution candidate: a PTR for
+		// "my-laptop.local" doesn't tell us what the laptop
+		// is talking to.
+		if e.DstPort == 5353 {
 			for _, answer := range dnsL.Answers {
 				if answer.Type == layers.DNSTypePTR {
 					e.Hostname = string(answer.PTR)
 					e.IsDiscovery = true
 					break
+				}
+			}
+		}
+
+		// Regular DNS responses (QR=1) — extract every A/AAAA
+		// record so the resolver can map the IP to the queried
+		// hostname. We use the question's name as the canonical
+		// name because a CNAME chain would otherwise point the
+		// final A record at the CNAME target ("cdn.example.com")
+		// rather than the user-visible name ("example.com").
+		if dnsL.QR && len(dnsL.Answers) > 0 {
+			var canonical string
+			if len(dnsL.Questions) > 0 {
+				canonical = string(dnsL.Questions[0].Name)
+			}
+			for _, ans := range dnsL.Answers {
+				if ans.Type != layers.DNSTypeA && ans.Type != layers.DNSTypeAAAA {
+					continue
+				}
+				ip := ans.IP.String()
+				name := canonical
+				if name == "" {
+					name = string(ans.Name)
+				}
+				if ip != "" && name != "" {
+					e.DNSAnswers = append(e.DNSAnswers, DNSAnswer{
+						IP:       ip,
+						Hostname: name,
+						TTL:      ans.TTL,
+					})
 				}
 			}
 		}

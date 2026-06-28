@@ -20,9 +20,12 @@ type Config struct {
 }
 
 type CaptureConfig struct {
-	Interface string `yaml:"interface"`
-	BPF       string `yaml:"bpf"`
-	Snaplen   int    `yaml:"snaplen"`
+	Interface      string `yaml:"interface"           json:"interface"`
+	BPF            string `yaml:"bpf"                 json:"bpf"`
+	Snaplen        int    `yaml:"snaplen"             json:"snaplen"`
+	MaxPcapSizeMB  int    `yaml:"max_pcap_size_mb"    json:"max_pcap_size_mb"`
+	MaxPcapAgeHours int   `yaml:"max_pcap_age_hours"  json:"max_pcap_age_hours"`
+	PcapDir        string `yaml:"pcap_dir"            json:"pcap_dir"`
 }
 
 type ServerConfig struct {
@@ -62,12 +65,15 @@ func defaults() Config {
 			// the CORS middleware entirely (see
 			// internal/api/router.go), which is the wrong
 			// default for a dev-friendly binary.
-			CORSOrigins: []string{"http://localhost:5173", "http://127.0.0.1:3000"},
+			CORSOrigins: []string{"http://localhost:5173", "http://127.0.0.1:5173", "http://127.0.0.1:3000"},
 		},
 		Capture: CaptureConfig{
-			Interface: "",
-			BPF:       "tcp port 80 or tcp port 443",
-			Snaplen:   65535,
+			Interface:      "",
+			BPF:            "tcp port 80 or tcp port 443",
+			Snaplen:        65535,
+			MaxPcapSizeMB:  500,
+			MaxPcapAgeHours: 168,
+			PcapDir:        filepath.Join("data", "pcaps"),
 		},
 		AI: AIConfig{
 			OllamaURL:          "http://localhost:11434",

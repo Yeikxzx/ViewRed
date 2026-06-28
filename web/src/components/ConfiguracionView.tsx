@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import {
   Settings,
-  Tv,
   HardDrive,
   Cpu,
   Database,
@@ -12,17 +11,23 @@ import {
   RefreshCw,
   ShieldAlert,
   Trash2,
-  Plus
+  Plus,
+  Info
 } from 'lucide-react';
 
 export default function ConfiguracionView() {
-  const [activeTab, setActiveTab] = useState<'general' | 'captura' | 'integracion' | 'reglas' | 'logs'>('general');
-  const [ollamaURL, setOllamaURL] = useState('http://127.0.0.1:11434');
-  const [ollamaConnected, setOllamaConnected] = useState(true);
+  const [activeTab, setActiveTab] = useState<'captura' | 'integracion' | 'reglas' | 'logs'>('captura');
+  const [ollamaURL, setOllamaURL] = useState(localStorage.getItem('viewred.ollama_url') || 'http://127.0.0.1:11434');
+  const [ollamaConnected, setOllamaConnected] = useState(false);
   const [testingConnection, setTestingConnection] = useState(false);
-  const [nmapPath, setNmapPath] = useState('/usr/bin/nmap');
-  const [suricataPath, setSuricataPath] = useState('/etc/suricata/suricata.yaml');
-  const [autoArchive, setAutoArchive] = useState(true);
+  const [nmapPath, setNmapPath] = useState(localStorage.getItem('viewred.nmap_path') || '');
+  const [suricataPath, setSuricataPath] = useState(localStorage.getItem('viewred.suricata_path') || '');
+  const [autoArchive, setAutoArchive] = useState(localStorage.getItem('viewred.auto_archive') !== 'false');
+  const [pcapRetention, setPcapRetention] = useState(localStorage.getItem('viewred.pcap_retention') || '30');
+  const [metadataRetention, setMetadataRetention] = useState(localStorage.getItem('viewred.metadata_retention') || '90');
+  
+  const [showSyntaxHelp, setShowSyntaxHelp] = useState(false);
+  
   const [saveToast, setSaveToast] = useState(false);
 
   const [customRules, setCustomRules] = useState<{ id: number; rule_text: string; enabled: boolean }[]>([]);
@@ -68,16 +73,44 @@ export default function ConfiguracionView() {
     }
   };
 
-  const handleTestOllamaConnection = () => {
+  const handleTestOllamaConnection = async () => {
     setTestingConnection(true);
-    setTimeout(() => {
+    setOllamaConnected(false);
+    try {
+      const res = await fetch('/api/v1/ollama/test');
+      const data = await res.json();
+      if (res.ok && data.available) {
+        setOllamaConnected(true);
+        toast.success(`Conexion exitosa: ${data.model} disponible`);
+      } else {
+        setOllamaConnected(false);
+        toast.error(`Modelo no disponible: ${data.error || 'ver consola'}`);
+        console.error('Ollama test failed:', data);
+      }
+    } catch (err) {
+      setOllamaConnected(false);
+      toast.error(`Error de conexion: ${err instanceof Error ? err.message : 'desconocido'}`);
+      console.error('Ollama test error:', err);
+    } finally {
       setTestingConnection(false);
-      setOllamaConnected(true);
-      alert('Conexión con Ollama establecida con éxito: Modelo llama3 (8b) activo.');
-    }, 1500);
+    }
   };
 
   const handleSaveConfig = () => {
+    // Persist client-side preferences to localStorage so they survive
+    // a page reload. The URL/paths shown in this panel come from the
+    // backend's config.yaml — to change those, edit the file and
+    // restart the ViewRed service.
+    try {
+      localStorage.setItem('viewred.ollama_url', ollamaURL);
+      localStorage.setItem('viewred.nmap_path', nmapPath);
+      localStorage.setItem('viewred.suricata_path', suricataPath);
+      localStorage.setItem('viewred.auto_archive', String(autoArchive));
+      localStorage.setItem('viewred.pcap_retention', pcapRetention);
+      localStorage.setItem('viewred.metadata_retention', metadataRetention);
+    } catch {
+      // localStorage may be disabled (e.g. private mode); non-fatal.
+    }
     setSaveToast(true);
     setTimeout(() => setSaveToast(false), 2500);
   };
@@ -98,15 +131,6 @@ export default function ConfiguracionView() {
     <div id="settings-view-wrapper" className="grid grid-cols-1 lg:grid-cols-12 gap-6 text-left font-sans">
       {/* Sidebar internal tab options: 4 Cols */}
       <div className="lg:col-span-3 space-y-1 bg-[#131820] border border-[#2a3242] p-2.5 rounded-lg h-fit select-none">
-        <button
-          onClick={() => setActiveTab('general')}
-          className={`w-full flex items-center gap-2.5 py-2 px-3.5 rounded text-xs font-mono text-left transition-all ${
-            activeTab === 'general' ? 'bg-[#1c2230] text-[#3b82f6] font-bold' : 'text-[#9ba3b4] hover:text-white hover:bg-[#131820]/50'
-          }`}
-        >
-          <Tv className="h-4 w-4" />
-          <span>General & Visualización</span>
-        </button>
         <button
           onClick={() => setActiveTab('captura')}
           className={`w-full flex items-center gap-2.5 py-2 px-3.5 rounded text-xs font-mono text-left transition-all ${
@@ -148,53 +172,6 @@ export default function ConfiguracionView() {
       {/* Configurations actual form body: 8 Cols */}
       <div className="lg:col-span-9 space-y-6">
         <div className="bg-[#131820] border border-[#2a3242] p-5 rounded-lg h-fit space-y-5">
-          {/* General Tab */}
-          {activeTab === 'general' && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 border-b border-[#2a3242] pb-2.5 mb-1">
-                <Tv className="h-4 w-4 text-[#3b82f6]" />
-                <span className="font-sans font-bold text-sm text-[#e4e7eb]">
-                  Interfaz y Visualización
-                </span>
-              </div>
-
-              {/* Theme selection (Disabled as per prompt specifications to match strict "Mode Dark by Default" philosophy) */}
-              <div className="space-y-1">
-                <label className="text-[11px] font-mono text-[#9ba3b4] block">TEMA PRINCIPAL</label>
-                <div className="flex gap-2 select-none">
-                  <span className="bg-[#0a0e14] border border-[#3a4356] text-xs font-semibold px-3 py-1.5 rounded text-white flex items-center gap-2">
-                    <span>Oscuro Technical (Sentinel Default)</span>
-                    <span className="w-2 h-2 rounded-full bg-[#10b981]" />
-                  </span>
-                  <span className="border border-[#2a3242] opacity-40 text-xs px-3 py-1.5 rounded text-[#5c6473] cursor-not-allowed">
-                    Claro (Deshabilitado)
-                  </span>
-                </div>
-                <span className="text-[9px] font-mono text-[#5c6473] block leading-tight pt-0.5">
-                  El visualizador ViewRed prioriza la disminución ocular durante sesiones de SecOps continuas.
-                </span>
-              </div>
-
-              {/* Language selection dropdown */}
-              <div className="space-y-1">
-                <label className="text-[11px] font-mono text-[#9ba3b4] block">IDIOMA DE LA INTERFAZ</label>
-                <select className="bg-[#0a0e14] border border-[#2a3242] text-xs text-[#e4e7eb] rounded p-2 outline-none font-sans cursor-pointer">
-                  <option value="es">Español (ES) - Sistema Central</option>
-                  <option value="en">English (US)</option>
-                </select>
-              </div>
-
-              {/* Timezone */}
-              <div className="space-y-1">
-                <label className="text-[11px] font-mono text-[#9ba3b4] block">ZONA HORARIA</label>
-                <select className="bg-[#0a0e14] border border-[#2a3242] text-xs text-[#e4e7eb] rounded p-2 outline-none font-sans cursor-pointer">
-                  <option value="utc">UTC (Coordinated Universal Time) - Recomendado</option>
-                  <option value="local">Hora Local del Sistema</option>
-                </select>
-              </div>
-            </div>
-          )}
-
           {/* Almacenamiento & Retencion Tab */}
           {activeTab === 'captura' && (
             <div className="space-y-4">
@@ -211,7 +188,8 @@ export default function ConfiguracionView() {
                 <div className="flex items-center gap-2">
                   <input
                     type="number"
-                    defaultValue={30}
+                    value={pcapRetention}
+                    onChange={(e) => setPcapRetention(e.target.value)}
                     className="bg-[#0a0e14] border border-[#2a3242] text-xs text-[#e4e7eb] rounded p-2 w-24 outline-none font-mono"
                   />
                   <span className="text-xs text-[#9ba3b4]">días</span>
@@ -227,7 +205,8 @@ export default function ConfiguracionView() {
                 <div className="flex items-center gap-2">
                   <input
                     type="number"
-                    defaultValue={90}
+                    value={metadataRetention}
+                    onChange={(e) => setMetadataRetention(e.target.value)}
                     className="bg-[#0a0e14] border border-[#2a3242] text-xs text-[#e4e7eb] rounded p-2 w-24 outline-none font-mono"
                   />
                   <span className="text-xs text-[#9ba3b4]">días</span>
@@ -258,9 +237,17 @@ export default function ConfiguracionView() {
             <div className="space-y-4">
               <div className="flex items-center gap-2 border-b border-[#2a3242] pb-2.5 mb-1">
                 <Cpu className="h-4 w-4 text-[#3b82f6]" />
-                <span className="font-sans font-bold text-sm text-[#e4e7eb]">
+                <span className="font-sans font-bold text-sm text-[#e4e7eb] flex-1">
                   Integraciones y Rutas del Sistema
                 </span>
+                <button
+                  type="button"
+                  onClick={() => setShowSyntaxHelp(true)}
+                  className="text-[#9ba3b4] hover:text-white transition-colors flex items-center gap-1.5 text-xs font-mono bg-[#1c2230] px-2 py-1 rounded"
+                >
+                  <Info className="h-3.5 w-3.5" />
+                  <span>Sintaxis OS</span>
+                </button>
               </div>
 
               {/* Ollama API Endpoint URL */}
@@ -283,9 +270,17 @@ export default function ConfiguracionView() {
                     <span>Test Conexión</span>
                   </button>
                 </div>
-                <span className="flex items-center gap-1.5 text-[10px] font-mono pt-1 text-[#10b981]">
-                  <span>🟢 Modelo llama3 (8b) detectado de forma exitosa.</span>
-                </span>
+                {ollamaConnected ? (
+                  <span className="flex items-center gap-1.5 text-[10px] font-mono pt-1 text-[#10b981]">
+                    <Check className="h-3.5 w-3.5" />
+                    <span>Ollama accesible y modelo configurado disponible.</span>
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1.5 text-[10px] font-mono pt-1 text-amber-400">
+                    <Info className="h-3.5 w-3.5" />
+                    <span>Hace clic en "Test Conexion" para verificar Ollama.</span>
+                  </span>
+                )}
               </div>
 
               {/* Nmap binary path */}
@@ -295,6 +290,7 @@ export default function ConfiguracionView() {
                   type="text"
                   value={nmapPath}
                   onChange={(e) => setNmapPath(e.target.value)}
+                  placeholder="C:\\Program Files (x86)\\Nmap\\nmap.exe  o  /usr/bin/nmap"
                   className="bg-[#0a0e14] border border-[#2a3242] focus:border-[#3b82f6] text-xs text-[#e4e7eb] rounded p-2 outline-none font-mono w-full"
                 />
               </div>
@@ -306,6 +302,7 @@ export default function ConfiguracionView() {
                   type="text"
                   value={suricataPath}
                   onChange={(e) => setSuricataPath(e.target.value)}
+                  placeholder="C:\\Program Files\\Suricata\\suricata.yaml  o  /etc/suricata/suricata.yaml"
                   className="bg-[#0a0e14] border border-[#2a3242] focus:border-[#3b82f6] text-xs text-[#e4e7eb] rounded p-2 outline-none font-mono w-full"
                 />
               </div>
@@ -395,7 +392,7 @@ export default function ConfiguracionView() {
           {activeTab !== 'logs' && (
             <div className="flex justify-end gap-2 border-t border-[#1c2230] pt-4 mt-1 select-none">
               <span className="text-[#5c6473] font-mono text-[10px] mr-auto mt-2">
-                *Los cambios requerirán reload de servicios para aplicarse.
+                *Las URLs de Nmap/Suricata/Ollama se editan en config.yaml. Recargá el backend para que apliquen.
               </span>
               <button
                 type="button"
@@ -414,6 +411,49 @@ export default function ConfiguracionView() {
         <div className="fixed bottom-6 right-6 z-50 bg-[#10b981] text-white px-4 py-2.5 rounded shadow-xl font-sans text-xs font-semibold flex items-center gap-2">
           <Check className="h-3.5 w-3.5" />
           <span>Configuración guardada. Recargando subprocesos...</span>
+        </div>
+      )}
+
+      {/* Syntax Help Modal */}
+      {showSyntaxHelp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-[#131820] border border-[#2a3242] rounded-lg p-5 w-[500px] shadow-2xl relative">
+            <h3 className="text-[#e4e7eb] font-sans font-bold text-sm mb-4 flex items-center gap-2">
+              <Info className="h-4 w-4 text-[#3b82f6]" />
+              Sintaxis de Rutas por SO
+            </h3>
+            
+            <div className="space-y-4 text-xs font-mono">
+              <div className="bg-[#0a0e14] border border-[#2a3242] rounded p-3">
+                <h4 className="text-[#3b82f6] font-bold mb-2">Windows</h4>
+                <p className="text-[#9ba3b4] mb-2 leading-relaxed">
+                  Las rutas utilizan barras invertidas (<span className="text-[#e4e7eb]">\\</span>). Se recomienda usar la ruta completa.
+                </p>
+                <div className="text-[#e4e7eb] pl-3 border-l-2 border-[#1c2230] space-y-1">
+                  <span className="block"><span className="text-[#5c6473]">Nmap:</span> <span className="text-[#10b981]">C:\Program Files (x86)\Nmap\nmap.exe</span></span>
+                  <span className="block"><span className="text-[#5c6473]">Suricata:</span> <span className="text-[#10b981]">C:\Program Files\Suricata\suricata.yaml</span></span>
+                </div>
+              </div>
+
+              <div className="bg-[#0a0e14] border border-[#2a3242] rounded p-3">
+                <h4 className="text-[#3b82f6] font-bold mb-2">Linux / macOS</h4>
+                <p className="text-[#9ba3b4] mb-2 leading-relaxed">
+                  Las rutas utilizan barras normales (<span className="text-[#e4e7eb]">/</span>) hacia los binarios o archivos de configuración.
+                </p>
+                <div className="text-[#e4e7eb] pl-3 border-l-2 border-[#1c2230] space-y-1">
+                  <span className="block"><span className="text-[#5c6473]">Nmap:</span> <span className="text-[#10b981]">/usr/bin/nmap</span></span>
+                  <span className="block"><span className="text-[#5c6473]">Suricata:</span> <span className="text-[#10b981]">/etc/suricata/suricata.yaml</span></span>
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowSyntaxHelp(false)}
+              className="mt-5 w-full bg-[#3b82f6] hover:bg-[#3b82f6]/95 text-white py-2 rounded text-xs font-bold transition-colors shadow-lg shadow-[#3b82f6]/10"
+            >
+              Entendido
+            </button>
+          </div>
         </div>
       )}
     </div>

@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"log"
+	"net"
 	"sync"
 	"time"
 
@@ -66,9 +67,28 @@ func (e *Engine) getDeviceID(ctx context.Context, ip, mac, vendor, hostname stri
 	return newID
 }
 
+// isPrivateIP returns true when ip belongs to a private / local
+// network range (RFC 1918, RFC 6598, RFC 4193, or link-local).
+func isPrivateIP(ip string) bool {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	return parsed.IsPrivate() || parsed.IsLinkLocalUnicast()
+}
+
 // Process inspects a packet for MAC/IP and topology connections.
+//
+// Only private (local network) IPs are tracked — public IPs seen in
+// outbound traffic are ignored so the topology graph stays focused on
+// devices around the network. Self-loop edges (src == dst) are also
+// skipped.
 func (e *Engine) Process(ctx context.Context, pkt capture.PacketEvent) {
 	if pkt.SrcMAC == "" || pkt.SrcIP == "" {
+		return
+	}
+	// Skip public / external IPs — we only track local network devices.
+	if !isPrivateIP(pkt.SrcIP) {
 		return
 	}
 
@@ -82,8 +102,13 @@ func (e *Engine) Process(ctx context.Context, pkt capture.PacketEvent) {
 	}
 
 	if pkt.DstIP != "" && pkt.Length > 0 && srcID != 0 {
+		// Only create edges between private IPs — skip external
+		// destinations and self-loops.
+		if !isPrivateIP(pkt.DstIP) {
+			return
+		}
 		dstID := e.getCachedID(pkt.DstIP)
-		if dstID != 0 {
+		if dstID != 0 && dstID != srcID {
 			e.writer.UpsertTopologyEdge(srcID, dstID, uint64(pkt.Length), pkt.Timestamp)
 		}
 	}

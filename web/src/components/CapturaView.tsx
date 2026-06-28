@@ -22,10 +22,9 @@ import {
   CartesianGrid,
   Tooltip,
 } from 'recharts';
-import { storageHistory } from '../data/mockData';
 import { useSSEStore, type CaptureStatus } from '../store/sse-store';
 import { deriveCapturaViewState } from '../lib/view-state';
-import { getInterfaces, getCaptureConfig, updateCaptureConfig, restartCapture, NetworkInterface } from '../lib/api';
+import { getInterfaces, getCaptureConfig, updateCaptureConfig, restartCapture, getPackets, getStoragePolicy, updateStoragePolicy, NetworkInterface } from '../lib/api';
 import { toast } from 'sonner';
 
 interface CapturaViewProps {
@@ -70,12 +69,19 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
   const [selectedInterface, setSelectedInterface] = useState('');
   const [bpfFilter, setBpfFilter] = useState('');
   const [snaplen, setSnaplen] = useState(65535);
-  const [rotSize, setRotSize] = useState('500 MB');
-  const [retention, setRetention] = useState('7 Días');
+  const [rotSizeMB, setRotSizeMB] = useState(500);
+  const [retentionHours, setRetentionHours] = useState(168);
   const [showAppliedToast, setShowAppliedToast] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSavingStorage, setIsSavingStorage] = useState(false);
+  const [storageHealth, setStorageHealth] = useState<string | null>(null);
+  // Storage chart data computed from real packet DB.
+  const [storageData, setStorageData] = useState<{ time: string; used: number }[]>([]);
+  const [totalPackets, setTotalPackets] = useState<number | null>(null);
+  const [totalBytes, setTotalBytes] = useState<number | null>(null);
+  const [activeSessions, setActiveSessions] = useState<number | null>(null);
 
-  // Fetch initial config and interfaces
+  // Fetch initial config, interfaces, and storage policy
   useEffect(() => {
     async function loadData() {
       // Load interfaces independently — if pcap fails (no Npcap), the
@@ -99,8 +105,61 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
       } catch (err) {
         console.error('Failed to load capture config:', err);
       }
+
+      // Load storage policy (rotation size and retention).
+      try {
+        const policy = await getStoragePolicy();
+        setRotSizeMB(policy.max_pcap_size_mb);
+        setRetentionHours(policy.max_pcap_age_hours);
+      } catch (err) {
+        console.error('Failed to load storage policy:', err);
+      }
     }
     loadData();
+  }, []);
+
+  // Fetch storage history (last 24h) by aggregating packet bytes into
+  // hourly buckets. Updates every 30s.
+  useEffect(() => {
+    async function loadStorageHistory() {
+      try {
+        const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        const resp = await getPackets({ since, limit: 500 });
+        // Initialize 24 hourly buckets
+        const buckets: { time: string; used: number; hour: number }[] = [];
+        const now = new Date();
+        for (let i = 23; i >= 0; i--) {
+          const h = new Date(now.getTime() - i * 60 * 60 * 1000);
+          buckets.push({
+            time: h.getHours().toString().padStart(2, '0') + 'h',
+            used: 0,
+            hour: h.getHours(),
+          });
+        }
+        // Sum packet bytes per hour bucket
+        let sumBytes = 0;
+        const uniqueIps = new Set<string>();
+        
+        for (const pkt of resp.packets) {
+          const pktHour = new Date(pkt.time).getHours();
+          const b = buckets.find((x) => x.hour === pktHour);
+          if (b) b.used += pkt.length;
+          
+          sumBytes += pkt.length;
+          if (pkt.src_ip) uniqueIps.add(pkt.src_ip);
+          if (pkt.dst_ip) uniqueIps.add(pkt.dst_ip);
+        }
+        setStorageData(buckets.map((b) => ({ time: b.time, used: b.used })));
+        setTotalPackets(resp.total);
+        setTotalBytes(sumBytes);
+        setActiveSessions(uniqueIps.size > 0 ? uniqueIps.size - 1 : 0);
+      } catch (err) {
+        console.error('Failed to load storage history:', err);
+      }
+    }
+    loadStorageHistory();
+    const interval = setInterval(loadStorageHistory, POLL_INTERVAL_MS);
+    return () => clearInterval(interval);
   }, []);
 
   // Health-polling state. `healthError` is the local "last poll
@@ -159,6 +218,13 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
         setHealthError(null);
         setStoreLastError(null);
         setStoreCaptureStatus(deriveCaptureStatus(body));
+        // Surface the storage subsystem health for the policy UI.
+        const storage = body.subsystems.find((s) => s.name === 'storage');
+        if (storage) {
+          setStorageHealth(storage.status === 'ok' ? 'ok' : storage.detail || 'error');
+        } else {
+          setStorageHealth('unknown');
+        }
       } catch (err) {
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : 'fetch failed';
@@ -221,6 +287,21 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
       toast.error("Error al guardar la configuración");
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleSaveStoragePolicy = async () => {
+    setIsSavingStorage(true);
+    try {
+      await updateStoragePolicy({
+        max_pcap_size_mb: rotSizeMB,
+        max_pcap_age_hours: retentionHours,
+      });
+      toast.success("Política de almacenamiento guardada. Los cambios aplicarán al reiniciar la captura.");
+    } catch (err) {
+      toast.error("Error al guardar la política de almacenamiento");
+    } finally {
+      setIsSavingStorage(false);
     }
   };
 
@@ -319,7 +400,7 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
                 {badgeText}
               </span>
               <span className="font-mono text-[11px] text-[#5c6473]">
-                Interfaz: {selectedInterface.split(' ')[0]} • Fuente: /api/v1/health (polling 2s)
+                Interfaz: {interfaces.find(i => i.name === selectedInterface)?.description || selectedInterface.split(' ')[0]} • Fuente: /api/v1/health (polling 2s)
               </span>
             </div>
           </div>
@@ -388,38 +469,37 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
           </div>
           <div className="bg-[#0a0e14] border border-[#2a3242]/40 p-4 rounded text-left">
             <span className="text-[10px] font-mono text-[#5c6473] font-bold block uppercase tracking-wider">
-              Polling
+              Paquetes Procesados
             </span>
             <span className="text-xl font-mono font-bold text-[#3b82f6] block mt-1">
-              2s
-            </span>
-            <span className="text-[9px] font-mono text-[#10b981] block mt-0.5">
-              Intervalo configurable
-            </span>
-          </div>
-          <div className="bg-[#0a0e14] border border-[#2a3242]/40 p-4 rounded text-left">
-            <span className="text-[10px] font-mono text-[#5c6473] font-bold block uppercase tracking-wider">
-              Health Source
-            </span>
-            <span className="text-xl font-mono font-bold text-[#e4e7eb] block mt-1">
-              {HEALTH_URL}
+              {totalPackets !== null ? totalPackets.toLocaleString() : '--'}
             </span>
             <span className="text-[9px] font-mono text-[#5c6473] block mt-0.5">
-              Reintentando con backoff
+              {totalPackets !== null ? 'Últimas 24h' : 'Esperando métricas...'}
             </span>
           </div>
           <div className="bg-[#0a0e14] border border-[#2a3242]/40 p-4 rounded text-left">
             <span className="text-[10px] font-mono text-[#5c6473] font-bold block uppercase tracking-wider">
-              Worker detail
+              Tráfico Total
+            </span>
+            <span className="text-xl font-mono font-bold text-[#e4e7eb] block mt-1">
+              {totalBytes !== null ? (totalBytes / (1024 * 1024)).toFixed(2) : '--'} MB
+            </span>
+            <span className="text-[9px] font-mono text-[#5c6473] block mt-0.5">
+              {totalBytes !== null ? 'Últimas 24h' : 'Esperando métricas...'}
+            </span>
+          </div>
+          <div className="bg-[#0a0e14] border border-[#2a3242]/40 p-4 rounded text-left">
+            <span className="text-[10px] font-mono text-[#5c6473] font-bold block uppercase tracking-wider">
+              Sesiones Activas
             </span>
             <span
-              className="text-xl font-mono font-bold text-amber-500 block mt-1"
-              id="captura-worker-detail"
+              className="text-xl font-mono font-bold text-[#e4e7eb] block mt-1"
             >
-              {healthError ? 'ERROR' : 'OK'}
+              {activeSessions !== null ? activeSessions.toLocaleString() : '--'}
             </span>
-            <span className="text-[9px] font-mono text-amber-500 block mt-0.5">
-              {healthError ?? 'Sin errores en el último poll'}
+            <span className="text-[9px] font-mono text-[#5c6473] block mt-0.5">
+              {activeSessions !== null ? 'Endpoints detectados' : 'Esperando métricas...'}
             </span>
           </div>
         </div>
@@ -437,8 +517,13 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
           </div>
 
           <div className="h-52 w-full font-mono text-xs">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={storageHistory} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+            {storageData.every((d) => d.used === 0) ? (
+              <div className="h-full flex items-center justify-center text-[#5c6473]">
+                <span className="text-[10px]">Sin datos de uso de almacenamiento en las últimas 24h</span>
+              </div>
+            ) : (
+            <ResponsiveContainer width="100%" height={180} minWidth={0}>
+              <AreaChart data={storageData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="storageColor" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2} />
@@ -466,6 +551,7 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
                 />
               </AreaChart>
             </ResponsiveContainer>
+            )}
           </div>
 
           <div className="flex justify-between items-center border-t border-[#1c2230] pt-3 text-[10px] font-mono text-[#5c6473]">
@@ -498,7 +584,7 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
               >
                 {interfaces.map((iface) => (
                   <option key={iface.name} value={iface.name}>
-                    {iface.name} {iface.description ? `(${iface.description})` : ''}
+                    {iface.description ? `${iface.description} (${iface.name})` : iface.name}
                   </option>
                 ))}
               </select>
@@ -562,15 +648,15 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
             <div className="space-y-1">
               <div className="flex justify-between text-[11px] font-mono">
                 <span className="text-[#9ba3b4]">Rotar archivo cada</span>
-                <span className="text-[#e4e7eb] font-bold">{rotSize}</span>
+                <span className="text-[#e4e7eb] font-bold">{rotSizeMB} MB</span>
               </div>
               <input
                 type="range"
                 min="100"
                 max="1000"
                 step="50"
-                value={parseInt(rotSize)}
-                onChange={(e) => setRotSize(`${e.target.value} MB`)}
+                value={rotSizeMB}
+                onChange={(e) => setRotSizeMB(Number(e.target.value))}
                 className="w-full h-1.5 bg-[#0a0e14] rounded-lg appearance-none cursor-pointer"
               />
             </div>
@@ -579,26 +665,49 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
             <div className="space-y-1">
               <div className="flex justify-between text-[11px] font-mono">
                 <span className="text-[#9ba3b4]">Retención Máxima</span>
-                <span className="text-[#e4e7eb] font-bold">{retention}</span>
+                <span className="text-[#e4e7eb] font-bold">{retentionHours}h ({Math.round(retentionHours / 24)} días)</span>
               </div>
               <input
                 type="range"
-                min="1"
-                max="30"
-                step="1"
-                value={parseInt(retention)}
-                onChange={(e) => setRetention(`${e.target.value} Días`)}
+                min="24"
+                max="720"
+                step="24"
+                value={retentionHours}
+                onChange={(e) => setRetentionHours(Number(e.target.value))}
                 className="w-full h-1.5 bg-[#0a0e14] rounded-lg appearance-none cursor-pointer"
               />
             </div>
 
-            <div className="flex items-start gap-2 text-[10px] text-[#5c6473] font-mono border-t border-[#1c2230] pt-2 mt-1">
+            {/* Storage health indicator */}
+            <div className="flex items-center gap-2 text-[10px] font-mono">
+              <span className={`w-2 h-2 rounded-full ${
+                storageHealth === 'ok' ? 'bg-[#10b981]' : storageHealth === 'unknown' ? 'bg-[#5c6473]' : 'bg-red-500'
+              }`} />
+              <span className={storageHealth === 'ok' ? 'text-[#10b981]' : 'text-[#9ba3b4]'}>
+                {storageHealth === 'ok'
+                  ? 'Base de datos conectada'
+                  : storageHealth === 'unknown'
+                  ? 'Estado de almacenamiento desconocido'
+                  : `Storage: ${storageHealth}`}
+              </span>
+            </div>
+
+            <div className="flex items-start gap-2 text-[10px] text-[#5c6473] font-mono">
               <AlertTriangle className="h-3 w-3 text-amber-500 shrink-0 mt-0.5" />
               <span>
-                Los archivos más antiguos serán deligados de forma automática cuando el disco supere
+                Los archivos más antiguos serán eliminados de forma automática cuando el disco supere
                 el 90% de capacidad asignada.
               </span>
             </div>
+
+            {/* Save button for storage policy */}
+            <button
+              onClick={handleSaveStoragePolicy}
+              disabled={isSavingStorage}
+              className="w-full bg-[#1c2230] hover:bg-[#2a3242] border border-[#3b82f6]/30 text-[#3b82f6] disabled:opacity-50 py-1.5 rounded text-xs font-mono font-bold flex items-center justify-center gap-2 transition-all cursor-pointer"
+            >
+              <span>{isSavingStorage ? "Guardando..." : "Guardar Política de Almacenamiento"}</span>
+            </button>
           </div>
         </div>
       </div>

@@ -85,6 +85,14 @@ export async function restartCapture(): Promise<void> {
   }
 }
 
+export async function stopCapture(): Promise<void> {
+  const res = await fetch('/api/v1/capture/stop', { method: 'POST' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to stop capture');
+  }
+}
+
 export async function updateCaptureConfig(config: CaptureConfig): Promise<CaptureConfig> {
   const res = await fetch('/api/v1/capture/config', {
     method: 'POST',
@@ -147,6 +155,12 @@ export interface PacketBackend {
   time: string;
   src_ip: string;
   dst_ip: string;
+  // Hostnames resolved from the backend's DNS cache. Optional —
+  // the backend only populates these when it has a recent A/AAAA
+  // record that mapped the IP to a name. The UI renders the IP
+  // alone when both are empty.
+  src_hostname?: string;
+  dst_hostname?: string;
   src_port: number;
   dst_port: number;
   protocol: string;
@@ -197,6 +211,20 @@ export async function acknowledgeAlert(id: string): Promise<void> {
   if (!res.ok) throw new Error('Error acknowledging alert');
 }
 
+export async function deleteAlert(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/alerts/${id}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error('Error deleting alert');
+}
+
+export async function clearAlerts(): Promise<void> {
+  const res = await fetch(`${API_BASE}/alerts`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error('Error clearing alerts');
+}
+
 export interface VulnerabilityBackend {
   id: number;
   device_ip: string;
@@ -226,9 +254,93 @@ export async function triggerScan(ip: string, profile: string): Promise<void> {
   }
 }
 
+export interface ScanHistoryBackend {
+  id: number;
+  target: string;
+  profile: string;
+  duration_ms: number;
+  hosts_scanned: number;
+  vulns_found: number;
+  status: string;
+  started_at: string;
+}
+
+export interface ScanHistoryResponse {
+  history: ScanHistoryBackend[];
+  limit: number;
+}
+
+export async function getScanHistory(limit = 20): Promise<ScanHistoryBackend[]> {
+  const res = await fetch(`${API_BASE}/scan-history?limit=${limit}`);
+  if (!res.ok) throw new Error('Error fetching scan history');
+  const data: ScanHistoryResponse = await res.json();
+  return data.history;
+}
+
 export async function mitigateVulnerability(id: number): Promise<void> {
   const res = await fetch(`${API_BASE}/vulnerabilities/${id}/mitigate`, {
     method: 'POST',
   });
   if (!res.ok) throw new Error('Error mitigating vulnerability');
+}
+
+export interface SystemMetrics {
+  cpu_percent: number;
+  ram_percent: number;
+  ram_used_mb: number;
+  ram_total_mb: number;
+  uptime_seconds: number;
+}
+
+export async function getSystemMetrics(): Promise<SystemMetrics> {
+  const res = await fetch(`${API_BASE}/system/metrics`);
+  if (!res.ok) throw new Error('Error fetching system metrics');
+  return res.json();
+}
+
+export interface StoragePolicy {
+  max_pcap_size_mb: number;
+  max_pcap_age_hours: number;
+}
+
+export async function getStoragePolicy(): Promise<StoragePolicy> {
+  const res = await fetch(`${API_BASE}/capture/storage-policy`);
+  if (!res.ok) throw new Error('Error fetching storage policy');
+  return res.json();
+}
+
+export async function updateStoragePolicy(policy: StoragePolicy): Promise<StoragePolicy> {
+  const res = await fetch(`${API_BASE}/capture/storage-policy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(policy),
+  });
+	if (!res.ok) throw new Error('Error updating storage policy');
+	return res.json();
+}
+
+export interface PcapFile {
+  name: string;
+  size: number;
+  timestamp: string;
+}
+
+export async function getPcaps(): Promise<PcapFile[]> {
+  const res = await fetch(`${API_BASE}/pcaps`);
+  if (!res.ok) throw new Error('Error fetching pcaps');
+  return res.json();
+}
+
+export async function deletePcap(filename: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/pcaps/${encodeURIComponent(filename)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error('Error deleting pcap');
+}
+
+export async function deleteAllPcaps(): Promise<void> {
+  const res = await fetch(`${API_BASE}/pcaps`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error('Error clearing pcaps');
 }

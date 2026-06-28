@@ -66,3 +66,35 @@ func AlertAcknowledge(q storage.Querier) gin.HandlerFunc {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	}
 }
+
+// AlertDelete returns a handler that deletes an alert by ID.
+func AlertDelete(q storage.Querier) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		idStr := c.Param("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid alert id"})
+			return
+		}
+
+		if err := q.DeleteAlert(c.Request.Context(), id); err != nil {
+			log.Printf("handlers.AlertDelete: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	}
+}
+
+// AlertClearAll returns a handler that deletes all alerts.
+func AlertClearAll(q storage.Querier) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if err := q.ClearAlerts(c.Request.Context()); err != nil {
+			log.Printf("handlers.AlertClearAll: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	}
+}
