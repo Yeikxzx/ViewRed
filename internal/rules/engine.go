@@ -101,6 +101,7 @@ func Parse(line string) (*Rule, error) {
 // Engine evaluates packets against a set of rules.
 type Engine struct {
 	rules   []*Rule
+	rulesMu sync.RWMutex
 	dedupMu sync.Mutex
 	dedup   map[string]time.Time // fingerprint -> when it was last alerted
 	dedupTTL time.Duration
@@ -124,8 +125,26 @@ func (e *Engine) AddRule(line string) error {
 		}
 		return err
 	}
+	e.rulesMu.Lock()
 	e.rules = append(e.rules, r)
+	e.rulesMu.Unlock()
 	return nil
+}
+
+// RemoveRule removes a rule by its SID (from options["sid"]).
+// Returns false if no rule matched. Thread-safe via rulesMu.
+func (e *Engine) RemoveRule(sid string) bool {
+	e.rulesMu.Lock()
+	defer e.rulesMu.Unlock()
+
+	for i, r := range e.rules {
+		if r.Options["sid"] == sid {
+			// Remove from slice
+			e.rules = append(e.rules[:i], e.rules[i+1:]...)
+			return true
+		}
+	}
+	return false
 }
 
 // Evaluate checks a packet against all loaded rules and returns matching
@@ -146,6 +165,9 @@ func (e *Engine) Evaluate(pkt capture.PacketEvent) []*Rule {
 		}
 		e.dedupMu.Unlock()
 	}
+
+	e.rulesMu.RLock()
+	defer e.rulesMu.RUnlock()
 
 	for _, r := range e.rules {
 		if !match(r, pkt) {
@@ -171,6 +193,18 @@ func (e *Engine) Evaluate(pkt capture.PacketEvent) []*Rule {
 }
 
 func match(r *Rule, pkt capture.PacketEvent) bool {
+	// Graceful skip for advanced options we don't fully support in V1
+	// to avoid false positives on generic rules that require them.
+	if _, ok := r.Options["flags"]; ok {
+		return false
+	}
+	if _, ok := r.Options["threshold"]; ok {
+		return false
+	}
+	if _, ok := r.Options["flowbits"]; ok {
+		return false
+	}
+
 	// Protocol check
 	if r.Protocol != "any" && !strings.EqualFold(r.Protocol, pkt.Protocol) {
 		if r.Protocol == "ip" {

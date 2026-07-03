@@ -31,7 +31,7 @@ export default function AlertasView({
   setSelectedAlertToExplain,
   setView,
 }: AlertasViewProps) {
-  const [severityFilter, setSeverityFilter] = useState<'ALL' | 'CRITICAL' | 'WARNING' | 'INFO'>('ALL');
+  const [severityFilter, setSeverityFilter] = useState<'ALL' | 'CRITICAL' | 'WARNING' | 'HIGH' | 'INFO'>('ALL');
   const [searchPhrase, setSearchPhrase] = useState('');
   const [showExplanationModal, setShowExplanationModal] = useState(false);
   const [explainingAlert, setExplainingAlert] = useState<NetworkAlert | null>(null);
@@ -80,7 +80,7 @@ export default function AlertasView({
   });
 
   const criticalCount = alerts.filter((a) => a.severity === 'CRITICAL' && !a.acknowledged).length;
-  const warningCount = alerts.filter((a) => a.severity === 'WARNING' && !a.acknowledged).length;
+  const warningCount = alerts.filter((a) => (a.severity === 'WARNING' || a.severity === 'HIGH') && !a.acknowledged).length;
   const infoCount = alerts.filter((a) => a.severity === 'INFO' && !a.acknowledged).length;
 
   return (
@@ -112,7 +112,7 @@ export default function AlertasView({
         <div
           onClick={() => setSeverityFilter('WARNING')}
           className={`bg-[#131820] border p-4 rounded-lg text-left cursor-pointer transition-all ${
-            severityFilter === 'WARNING' ? 'border-[#f59e0b] shadow-lg shadow-amber-500/10' : 'border-[#2a3242]'
+            (severityFilter === 'WARNING' || severityFilter === 'HIGH') ? 'border-[#f59e0b] shadow-lg shadow-amber-500/10' : 'border-[#2a3242]'
           }`}
         >
           <div className="flex justify-between items-center">
@@ -195,7 +195,7 @@ export default function AlertasView({
           <button
             onClick={() => setSeverityFilter('WARNING')}
             className={`px-3 py-1 rounded transition-all ${
-              severityFilter === 'WARNING' ? 'bg-amber-500 text-[#0a0e14] font-semibold' : 'text-[#9ba3b4] hover:text-[#e4e7eb]'
+              (severityFilter === 'WARNING' || severityFilter === 'HIGH') ? 'bg-amber-500 text-[#0a0e14] font-semibold' : 'text-[#9ba3b4] hover:text-[#e4e7eb]'
             }`}
           >
             Advertencia
@@ -242,7 +242,7 @@ export default function AlertasView({
                   ? 'border-[#2a3242]/40 opacity-70'
                   : alert.severity === 'CRITICAL'
                   ? 'border-l-4 border-l-red-500 border-[#2a3242] hover:border-red-500/50'
-                  : alert.severity === 'WARNING'
+                  : (alert.severity === 'WARNING' || alert.severity === 'HIGH')
                   ? 'border-l-4 border-l-amber-500 border-[#2a3242] hover:border-amber-500/50'
                   : 'border-l-4 border-l-cyan-500 border-[#2a3242] hover:border-cyan-500/50'
               }`}
@@ -254,7 +254,7 @@ export default function AlertasView({
                     className={`font-mono font-bold text-[10px] px-2 py-0.5 rounded tracking-wider ${
                       alert.severity === 'CRITICAL'
                         ? 'bg-red-500/10 text-red-500'
-                        : alert.severity === 'WARNING'
+                        : (alert.severity === 'WARNING' || alert.severity === 'HIGH')
                         ? 'bg-amber-500/10 text-amber-500'
                         : 'bg-cyan-500/10 text-cyan-500'
                     }`}

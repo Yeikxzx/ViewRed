@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"sync"
 	"time"
 
 	ort "github.com/yalue/onnxruntime_go"
@@ -21,6 +22,9 @@ type Engine struct {
 	isoSession  *ort.DynamicAdvancedSession
 	rfSession   *ort.DynamicAdvancedSession
 	windowStats *WindowStats
+	dedup       map[string]time.Time
+	dedupMu     sync.Mutex
+	dedupTTL    time.Duration
 }
 
 // NewEngine creates a new ML Engine.
@@ -71,6 +75,8 @@ func NewEngine(sharedLibraryPath, modelDir string) (*Engine, error) {
 		isoSession:  isoSession,
 		rfSession:   rfSession,
 		windowStats: NewWindowStats(),
+		dedup:       make(map[string]time.Time),
+		dedupTTL:    5 * time.Minute,
 	}, nil
 }
 
@@ -176,6 +182,30 @@ func (e *Engine) Evaluate(pkt capture.PacketEvent) (*storage.Alert, error) {
 		descriptionStr += " Possible Mirai botnet activity detected."
 		severity = "CRITICAL"
 	}
+
+	fingerprint := fmt.Sprintf("%s|%s|%s|%d", category, pkt.SrcIP, pkt.DstIP, pkt.DstPort)
+	e.dedupMu.Lock()
+	if e.dedup == nil {
+		e.dedup = make(map[string]time.Time)
+	}
+
+	// GC check
+	if len(e.dedup) > 1000 {
+		now := time.Now()
+		for k, v := range e.dedup {
+			if now.Sub(v) > e.dedupTTL {
+				delete(e.dedup, k)
+			}
+		}
+	}
+
+	lastSeen, ok := e.dedup[fingerprint]
+	if ok && time.Since(lastSeen) < e.dedupTTL {
+		e.dedupMu.Unlock()
+		return nil, nil // Deduplicated
+	}
+	e.dedup[fingerprint] = time.Now()
+	e.dedupMu.Unlock()
 
 	alert := &storage.Alert{
 		Time:        time.Now().UTC(),

@@ -108,24 +108,18 @@ func RestartCapture(deps CaptureConfigDeps) gin.HandlerFunc {
 		if iface == "" {
 			iface = os.Getenv("VIEWRED_INTERFACE")
 		}
+		if iface == "" {
+			iface = capture.AutoDetectInterface()
+		}
+
 		if err := h.Capturer.Start(iface, cfg.BPF); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start capture: " + err.Error()})
 			return
 		}
 
-		// Spawn a new bridge goroutine for the fresh Packets() channel.
-		go func() {
-			for e := range h.Capturer.Packets() {
-				select {
-				case h.Packets <- e:
-				default:
-				}
-				select {
-				case h.EvalPackets <- e:
-				default:
-				}
-			}
-		}()
+		// The original bridge goroutine created in main.go is still running
+		// and will continue to read from h.Capturer.Packets() (which is never closed).
+		// We do not spawn a new one here to avoid goroutine leaks.
 
 		// Broadcast the updated capture status to the frontend.
 		if statusJSON, err := json.Marshal(map[string]string{"status": "running"}); err == nil {

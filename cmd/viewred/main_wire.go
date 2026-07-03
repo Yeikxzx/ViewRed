@@ -14,6 +14,7 @@ import (
 	"github.com/viewred/viewred/internal/geoip"
 	"github.com/viewred/viewred/internal/health"
 	"github.com/viewred/viewred/internal/resolver"
+	"github.com/viewred/viewred/internal/rules"
 	"github.com/viewred/viewred/internal/sse"
 	"github.com/viewred/viewred/internal/storage"
 )
@@ -101,15 +102,15 @@ const (
 // ticker. main.go is responsible for picking the concrete Querier
 // (real *Storage or *storage.ErrorQuerier) before calling newWireUp,
 // keeping the wireUp itself dependency-light and unit-testable.
-func newWireUp(cfg *config.Config, rg *health.Registry, querier storage.Querier, dnsResolver *resolver.Resolver, capture *handlers.CaptureHandle, geoipSvc *geoip.Service) *wireUp {
-	return newWireUpWithInterval(cfg, rg, querier, dnsResolver, defaultMetricsInterval, capture, geoipSvc)
+func newWireUp(cfg *config.Config, rg *health.Registry, querier storage.Querier, dnsResolver *resolver.Resolver, capture *handlers.CaptureHandle, geoipSvc *geoip.Service, rulesEngine *rules.Engine) *wireUp {
+	return newWireUpWithInterval(cfg, rg, querier, dnsResolver, defaultMetricsInterval, capture, geoipSvc, rulesEngine)
 }
 
 // newWireUpWithInterval is the test-friendly form of newWireUp. The
 // production path goes through newWireUp, which uses the 1 Hz
 // default; tests inject a sub-second cadence so the metrics ticker
 // fires at least once before the test budget elapses.
-func newWireUpWithInterval(cfg *config.Config, rg *health.Registry, querier storage.Querier, dnsResolver *resolver.Resolver, interval time.Duration, capture *handlers.CaptureHandle, geoipSvc *geoip.Service) *wireUp {
+func newWireUpWithInterval(cfg *config.Config, rg *health.Registry, querier storage.Querier, dnsResolver *resolver.Resolver, interval time.Duration, capture *handlers.CaptureHandle, geoipSvc *geoip.Service, rulesEngine *rules.Engine) *wireUp {
 	broker := sse.NewBroker()
 	router := api.NewRouterWithDeps(api.RouterDeps{
 		Health:   rg,
@@ -119,6 +120,7 @@ func newWireUpWithInterval(cfg *config.Config, rg *health.Registry, querier stor
 		Capture:  capture,
 		GeoIP:    geoipSvc,
 		Resolver: dnsResolver,
+		RulesEngine: rulesEngine,
 		// Wire CORS from config so the React UI (running on
 		// Vite at http://localhost:5173 by default) can
 		// reach the API. Without this field the router

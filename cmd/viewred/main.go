@@ -36,11 +36,10 @@ import (
 	"github.com/viewred/viewred/internal/ml"
 	"github.com/viewred/viewred/internal/resolver"
 	"github.com/viewred/viewred/internal/rules"
+	"github.com/viewred/viewred/internal/scanner"
 	"github.com/viewred/viewred/internal/shutdown"
 	"github.com/viewred/viewred/internal/sse"
 	"github.com/viewred/viewred/internal/storage"
-
-	"github.com/google/gopacket/pcap"
 )
 
 // Version is the semantic version of this build, set via -ldflags at build time.
@@ -98,16 +97,8 @@ func main() {
 		iface = os.Getenv("VIEWRED_INTERFACE")
 	}
 	if iface == "" {
-		if devs, err := pcap.FindAllDevs(); err == nil && len(devs) > 0 {
-			// Find first non-loopback if possible, else just use the first one
-			iface = devs[0].Name
-			for _, d := range devs {
-				// Pick first interface with an IP address (often a real interface)
-				if len(d.Addresses) > 0 {
-					iface = d.Name
-					break
-				}
-			}
+		iface = capture.AutoDetectInterface()
+		if iface != "" {
 			log.Printf("VIEWRED_INTERFACE not set, auto-selected interface: %s", iface)
 		}
 	}
@@ -260,12 +251,6 @@ func main() {
 	// cache so repeat topology polling doesn't hit the external API.
 	geoipSvc := geoip.NewService(1 * time.Hour)
 
-	wire := newWireUp(&cfg, rg, querier, dnsResolver, captureHandle, geoipSvc)
-	// Set broker after wire creation to break the circular dependency:
-	// captureHandle → broker ← wire → captureHandle → RouterDeps.
-	captureHandle.Broker = wire.Broker
-
-	// Start ML and Rules evaluation worker
 	// Initialize Rules Engine
 	rulesEngine := rules.NewEngine()
 	if store != nil {
@@ -287,7 +272,13 @@ func main() {
 		_ = rulesEngine.AddRule(`alert tcp any any -> any 23 (msg:"Insecure Telnet Traffic"; severity:CRITICAL;)`)
 	}
 
-	// Initialize ML Engine.
+	wire := newWireUp(&cfg, rg, querier, dnsResolver, captureHandle, geoipSvc, rulesEngine)
+	// Set broker after wire creation to break the circular dependency:
+	// captureHandle → broker ← wire → captureHandle → RouterDeps.
+	captureHandle.Broker = wire.Broker
+
+	// Start ML and Rules evaluation worker
+		// Initialize ML Engine.
 	// Pass the project's onnxruntime.dll explicitly to avoid loading
 	// an older system-wide version from C:\WINDOWS\system32\.
 	mlDLL := "onnxruntime.dll"
@@ -315,6 +306,15 @@ func main() {
 			go func() {
 				defer func() { workerDone <- struct{}{} }()
 				for e := range evalPackets {
+					// 0. Scanner Traffic Filter (Auto-Attack exclusion)
+					// Skip packets to/from actively scanned targets
+					if _, scanningSrc := scanner.ActiveScans.Load(e.SrcIP); scanningSrc {
+						continue
+					}
+					if _, scanningDst := scanner.ActiveScans.Load(e.DstIP); scanningDst {
+						continue
+					}
+
 					if discEngine != nil {
 						discEngine.Process(ctx, e)
 					}

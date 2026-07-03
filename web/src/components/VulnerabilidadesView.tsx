@@ -156,7 +156,7 @@ export default function VulnerabilidadesView({
     setAiLoading(true);
     setAiStreamingText('');
 
-    let textToStream = `[ANÁLISIS DE INCIDENTE VIEWRED - VULNERABILIDAD CVE]\n\nSe ha evaluado el riesgo asociado a la vulnerabilidad '${vuln.cve}' en el dispositivo '${vuln.targetDevice}' (${vuln.targetIP}).\n\n🔴 GRAVEDAD (CVSS Score: ${vuln.cvss}):\nEsta vulnerabilidad está calificada como de severidad '${vuln.severity}'. Permite a atacantes remotos ejecutar payloads maliciosos comprometiendo el host.\n\n🛠️ INSTRUCCIONES DETALLADAS DE MITIGACIÓN:\n- Pasos inmediatos: ${vuln.mitigationSteps || 'Aplicar parches del distribuidor.'}\n\n¿Desea descargar el reporte integral PDF para compartir con el equipo de SecOps?`;
+    let textToStream = `[ANÁLISIS DE INCIDENTE VIEWRED - VULNERABILIDAD CVE]\n\nSe ha evaluado el riesgo asociado a la vulnerabilidad '${vuln.cve}' en el dispositivo '${vuln.targetDevice}' (${vuln.targetIP}).\n\n🔴 GRAVEDAD (CVSS Score: ${vuln.cvss}):\nEsta vulnerabilidad está calificada como de severidad '${vuln.severity}'. Permite a atacantes remotos ejecutar payloads maliciosos comprometiendo el host.\n\n🛠️ INSTRUCCIONES DETALLADAS DE MITIGACIÓN:\n- Pasos inmediatos: ${vuln.mitigationSteps || 'Aplicar parches del distribuidor.'}`;
 
     let i = 0;
     const interval = setInterval(() => {
@@ -527,10 +527,10 @@ export default function VulnerabilidadesView({
 
                 {!vuln.mitigated ? (
                   <button
-                    onClick={() => onMitigateVuln(vuln.id)}
-                    className="ml-auto px-3 py-1 text-[#10b981] hover:bg-[#10b981]/15 scale-100 hover:scale-[1.02] active:scale-[0.98] border border-[#10b981]/30 rounded text-xs font-mono transition-all font-bold cursor-pointer"
+                    disabled
+                    className="ml-auto px-3 py-1 text-[#10b981]/50 border border-[#10b981]/30 rounded text-xs font-mono font-bold cursor-not-allowed"
                   >
-                    Mitigar Riesgo
+                    Mitigación en V2
                   </button>
                 ) : (
                   <span className="ml-auto text-[#10b981] text-xs font-mono font-bold flex items-center gap-1">

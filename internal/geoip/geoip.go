@@ -5,9 +5,11 @@
 package geoip
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -146,4 +148,111 @@ func (s *Service) NetworkLocation() (Location, error) {
 		return Location{}, fmt.Errorf("network location: %w", err)
 	}
 	return s.Lookup(ip)
+}
+
+// batchRequest represents an item in the ip-api batch POST payload.
+type batchRequest struct {
+	Query  string `json:"query"`
+	Fields string `json:"fields,omitempty"`
+}
+
+// LookupBatch resolves multiple IPs with a cache-first strategy.
+// Cache misses are batched in groups of 40 with 60s pauses.
+// Returns partial results if some lookups fail (error logged, not returned).
+func (s *Service) LookupBatch(ips []string) ([]Location, error) {
+	var results []Location
+	var misses []string
+
+	s.mu.RLock()
+	for _, ip := range ips {
+		if ip == "" {
+			continue
+		}
+		if entry, ok := s.cache[ip]; ok && time.Since(entry.fetched) < s.ttl {
+			results = append(results, entry.location)
+		} else {
+			misses = append(misses, ip)
+		}
+	}
+	s.mu.RUnlock()
+
+	if len(misses) == 0 {
+		return results, nil
+	}
+
+	// Deduplicate misses
+	uniqueMisses := make(map[string]bool)
+	var dedupedMisses []string
+	for _, m := range misses {
+		if !uniqueMisses[m] {
+			uniqueMisses[m] = true
+			dedupedMisses = append(dedupedMisses, m)
+		}
+	}
+
+	batchSize := 40
+	for i := 0; i < len(dedupedMisses); i += batchSize {
+		end := i + batchSize
+		if end > len(dedupedMisses) {
+			end = len(dedupedMisses)
+		}
+		batch := dedupedMisses[i:end]
+
+		if i > 0 {
+			// Pause between batches to respect rate limits
+			time.Sleep(60 * time.Second)
+		}
+
+		var reqPayload []batchRequest
+		for _, ip := range batch {
+			reqPayload = append(reqPayload, batchRequest{
+				Query:  ip,
+				Fields: "status,lat,lon,city,regionName,country,countryCode,isp",
+			})
+		}
+		bodyData, _ := json.Marshal(reqPayload)
+
+		resp, err := s.client.Post("http://ip-api.com/batch", "application/json", bytes.NewReader(bodyData))
+		if err != nil {
+			log.Printf("geoip batch: request failed: %v", err)
+			continue
+		}
+		
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			log.Printf("geoip batch: ip-api returned %d", resp.StatusCode)
+			continue
+		}
+
+		var batchResps []ipApiResponse
+		if err := json.NewDecoder(resp.Body).Decode(&batchResps); err != nil {
+			resp.Body.Close()
+			log.Printf("geoip batch: decode error: %v", err)
+			continue
+		}
+		resp.Body.Close()
+
+		s.mu.Lock()
+		for j, apiResp := range batchResps {
+			ip := batch[j] // Order is guaranteed to match by ip-api
+			if apiResp.Status != "success" {
+				continue
+			}
+			loc := Location{
+				IP:         ip,
+				Latitude:   apiResp.Lat,
+				Longitude:  apiResp.Lon,
+				City:       apiResp.City,
+				Region:     apiResp.RegionName,
+				Country:    apiResp.Country,
+				CountryCode: apiResp.CountryCode,
+				ISP:        apiResp.ISP,
+			}
+			s.cache[ip] = cacheEntry{location: loc, fetched: time.Now()}
+			results = append(results, loc)
+		}
+		s.mu.Unlock()
+	}
+
+	return results, nil
 }

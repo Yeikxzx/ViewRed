@@ -27,7 +27,7 @@ export interface IPVolume {
 export interface NetworkAlert {
   id: string;
   timestamp: string;
-  severity: 'CRITICAL' | 'WARNING' | 'INFO';
+  severity: 'CRITICAL' | 'HIGH' | 'WARNING' | 'INFO';
   title: string;
   description: string;
   source: string;

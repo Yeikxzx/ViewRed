@@ -7,9 +7,13 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/viewred/viewred/internal/storage"
 )
+
+// ActiveScans tracks IPs currently being scanned by ViewRed to prevent auto-attack alerts.
+var ActiveScans sync.Map
 
 // NmapRun corresponds to the root XML element of nmap output.
 type NmapRun struct {
@@ -82,6 +86,9 @@ func NewEngine(q storage.Querier, nmapPath string) *Engine {
 // Scan synchronously executes an nmap scan and persists the findings.
 // Profile can be "quick", "full", or "service-detect".
 func (e *Engine) Scan(ctx context.Context, ip string, profile string) error {
+	ActiveScans.Store(ip, struct{}{})
+	defer ActiveScans.Delete(ip)
+
 	// Build nmap args
 	args := []string{"-oX", "-"} // Output XML to stdout
 	

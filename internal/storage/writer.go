@@ -249,6 +249,21 @@ func (w *Writer) UpsertDevice(ctx context.Context, dev Device) (int64, error) {
 		return 0, fmt.Errorf("UpsertDevice: empty IP")
 	}
 
+	var dbMAC interface{}
+	if dev.MAC != "" {
+		dbMAC = dev.MAC
+	}
+	
+	var dbVendor interface{}
+	if dev.Vendor != "" {
+		dbVendor = dev.Vendor
+	}
+	
+	var dbHostname interface{}
+	if dev.Hostname != "" {
+		dbHostname = dev.Hostname
+	}
+
 	var id int64
 	err := w.pool.QueryRow(ctx,
 		`INSERT INTO devices (ip, mac, vendor, hostname, first_seen, last_seen)
@@ -259,7 +274,7 @@ func (w *Writer) UpsertDevice(ctx context.Context, dev Device) (int64, error) {
 		 	hostname = COALESCE(EXCLUDED.hostname, devices.hostname),
 		 	last_seen = EXCLUDED.last_seen
 		 RETURNING id`,
-		dev.IP, dev.MAC, dev.Vendor, dev.Hostname, dev.LastSeen, dev.LastSeen,
+		dev.IP, dbMAC, dbVendor, dbHostname, dev.LastSeen, dev.LastSeen,
 	).Scan(&id)
 	return id, err
 }

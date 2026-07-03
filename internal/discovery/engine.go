@@ -17,6 +17,7 @@ type Engine struct {
 
 	ipMapMu sync.RWMutex
 	ipMap   map[string]int64 // IP -> DeviceID cache
+	macMap  map[string]int64 // MAC -> DeviceID cache for gateway resolution
 }
 
 // NewEngine creates a new discovery engine.
@@ -29,6 +30,7 @@ func NewEngine(writer *storage.Writer) *Engine {
 	return &Engine{
 		writer: writer,
 		ipMap:  make(map[string]int64),
+		macMap: make(map[string]int64),
 	}
 }
 
@@ -63,6 +65,9 @@ func (e *Engine) getDeviceID(ctx context.Context, ip, mac, vendor, hostname stri
 
 	e.ipMapMu.Lock()
 	e.ipMap[ip] = newID
+	if isPrivateIP(ip) && mac != "" {
+		e.macMap[mac] = newID
+	}
 	e.ipMapMu.Unlock()
 	return newID
 }
@@ -79,36 +84,79 @@ func isPrivateIP(ip string) bool {
 
 // Process inspects a packet for MAC/IP and topology connections.
 //
-// Only private (local network) IPs are tracked — public IPs seen in
-// outbound traffic are ignored so the topology graph stays focused on
-// devices around the network. Self-loop edges (src == dst) are also
-// skipped.
+// All IPs are tracked as nodes (both local and external) so the user
+// has full visibility of every device their network contacts. Edges
+// are only created when at least one endpoint is a local IP, to avoid
+// saturating the topology graph with external↔external connections.
+// Self-loop edges (src == dst) are also skipped.
 func (e *Engine) Process(ctx context.Context, pkt capture.PacketEvent) {
 	if pkt.SrcMAC == "" || pkt.SrcIP == "" {
 		return
 	}
-	// Skip public / external IPs — we only track local network devices.
-	if !isPrivateIP(pkt.SrcIP) {
-		return
-	}
 
-	vendor := GetVendor(pkt.SrcMAC)
+	srcMAC := pkt.SrcMAC
+	srcVendor := GetVendor(srcMAC)
+	// External IPs do not have a meaningful local MAC (it's just the gateway's MAC).
+	if !isPrivateIP(pkt.SrcIP) {
+		srcMAC = ""
+		srcVendor = ""
+	}
 
 	var srcID int64
 	if pkt.IsDiscovery || e.needsUpdate(pkt.SrcIP) {
-		srcID = e.getDeviceID(ctx, pkt.SrcIP, pkt.SrcMAC, vendor, pkt.Hostname, pkt.Timestamp)
+		srcID = e.getDeviceID(ctx, pkt.SrcIP, srcMAC, srcVendor, pkt.Hostname, pkt.Timestamp)
 	} else {
 		srcID = e.getCachedID(pkt.SrcIP)
 	}
 
 	if pkt.DstIP != "" && pkt.Length > 0 && srcID != 0 {
-		// Only create edges between private IPs — skip external
-		// destinations and self-loops.
-		if !isPrivateIP(pkt.DstIP) {
+		// Skip edges between two external IPs — keep the graph
+		// focused on what your local network is talking to.
+		if !isPrivateIP(pkt.SrcIP) && !isPrivateIP(pkt.DstIP) {
 			return
 		}
-		dstID := e.getCachedID(pkt.DstIP)
+
+		var dstID int64
+		if e.needsUpdate(pkt.DstIP) {
+			dstMAC := pkt.DstMAC
+			dstVendor := GetVendor(dstMAC)
+			if !isPrivateIP(pkt.DstIP) {
+				dstMAC = ""
+				dstVendor = ""
+			}
+			dstID = e.getDeviceID(ctx, pkt.DstIP, dstMAC, dstVendor, "", pkt.Timestamp)
+		} else {
+			dstID = e.getCachedID(pkt.DstIP)
+		}
+
 		if dstID != 0 && dstID != srcID {
+			// If traffic is going from Local to External, route it through the gateway (DstMAC)
+			if isPrivateIP(pkt.SrcIP) && !isPrivateIP(pkt.DstIP) && pkt.DstMAC != "" {
+				e.ipMapMu.RLock()
+				gwID, ok := e.macMap[pkt.DstMAC]
+				e.ipMapMu.RUnlock()
+				
+				if ok && gwID != srcID && gwID != dstID {
+					e.writer.UpsertTopologyEdge(srcID, gwID, uint64(pkt.Length), pkt.Timestamp)
+					e.writer.UpsertTopologyEdge(gwID, dstID, uint64(pkt.Length), pkt.Timestamp)
+					return
+				}
+			}
+
+			// If traffic is coming from External to Local, route it through the gateway (SrcMAC)
+			if !isPrivateIP(pkt.SrcIP) && isPrivateIP(pkt.DstIP) && pkt.SrcMAC != "" {
+				e.ipMapMu.RLock()
+				gwID, ok := e.macMap[pkt.SrcMAC]
+				e.ipMapMu.RUnlock()
+				
+				if ok && gwID != srcID && gwID != dstID {
+					e.writer.UpsertTopologyEdge(srcID, gwID, uint64(pkt.Length), pkt.Timestamp)
+					e.writer.UpsertTopologyEdge(gwID, dstID, uint64(pkt.Length), pkt.Timestamp)
+					return
+				}
+			}
+
+			// Normal direct edge
 			e.writer.UpsertTopologyEdge(srcID, dstID, uint64(pkt.Length), pkt.Timestamp)
 		}
 	}

@@ -21,6 +21,9 @@ import {
 } from 'lucide-react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import 'leaflet.markercluster';
+import 'leaflet.markercluster/dist/MarkerCluster.css';
+import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 
 interface TopologiaViewProps {
   setSelectedDeviceIP: (ip: string) => void;
@@ -56,6 +59,20 @@ interface GeoLocation {
   country: string;
   country_code: string;
   isp: string;
+}
+
+function isPrivateIP(ipStr: string): boolean {
+  const ip = ipStr.split('/')[0];
+  const parts = ip.split('.');
+  if (parts.length !== 4) return false;
+  const p1 = parseInt(parts[0], 10);
+  const p2 = parseInt(parts[1], 10);
+  if (p1 === 10) return true;
+  if (p1 === 172 && p2 >= 16 && p2 <= 31) return true;
+  if (p1 === 192 && p2 === 168) return true;
+  if (p1 === 127) return true;
+  if (p1 === 169 && p2 === 254) return true; // link-local
+  return false;
 }
 
 // ---- Device type heuristic -------------------------------------------------
@@ -104,14 +121,18 @@ function detectDeviceType(device: Device): DeviceType {
   if (vendor.includes('intel') || vendor.includes('dell') || vendor.includes('lenovo') ||
       vendor.includes('hp') || vendor.includes('hewlett') || vendor.includes('packard') ||
       vendor.includes('acer') || vendor.includes('microsoft') || vendor.includes('gigabyte') ||
-      vendor.includes('msi') || vendor.includes('amd') || vendor.includes('realtek') ||
+      vendor.includes('giga-byte') || vendor.includes('msi') || vendor.includes('micro-star') ||
+      vendor.includes('amd') || vendor.includes('realtek') || vendor.includes('asustek') ||
       vendor.includes('emachines') || vendor.includes('alienware') || vendor.includes('cyberpowerpc') ||
-      vendor.includes('ibuypower') || vendor.includes('liteon') || vendor.includes('wnc') ||
-      vendor.includes('azurewave') || vendor.includes('broadcom') || vendor.includes('qualcomm') ||
-      vendor.includes('atheros') || vendor.includes('marvell') || vendor.includes('mediatek') ||
-      vendor.includes('ralink') || vendor.includes('rivet') || vendor.includes('killer') ||
-      vendor.includes('foxconn') || vendor.includes('wistron') || vendor.includes('compal') ||
-      vendor.includes('quanta') || vendor.includes('pegatron') || vendor.includes('inventec')) return 'pc';
+      vendor.includes('ibuypower') || vendor.includes('liteon') || vendor.includes('lite-on') || 
+      vendor.includes('wnc') || vendor.includes('azurewave') || vendor.includes('broadcom') || 
+      vendor.includes('qualcomm') || vendor.includes('atheros') || vendor.includes('marvell') || 
+      vendor.includes('mediatek') || vendor.includes('ralink') || vendor.includes('rivet') || 
+      vendor.includes('killer') || vendor.includes('foxconn') || vendor.includes('hon hai') || 
+      vendor.includes('wistron') || vendor.includes('compal') || vendor.includes('quanta') || 
+      vendor.includes('pegatron') || vendor.includes('inventec') || vendor.includes('chicony') ||
+      vendor.includes('clevo') || vendor.includes('hefei') || vendor.includes('fujitsu') || 
+      vendor.includes('panasonic')) return 'pc';
 
   // --- PRINTER ---
   if (vendor.includes('epson') || vendor.includes('canon') || vendor.includes('brother') ||
@@ -124,12 +145,15 @@ function detectDeviceType(device: Device): DeviceType {
       vendor.includes('xiaomi') || vendor.includes('oneplus') || vendor.includes('motorola') ||
       vendor.includes('google') || vendor.includes('honor') || vendor.includes('oppo') ||
       vendor.includes('vivo') || vendor.includes('realme') || vendor.includes('zte') ||
-      vendor.includes('nokia') || vendor.includes('nothing') || vendor.includes('meizu')) return 'phone';
+      vendor.includes('nokia') || vendor.includes('nothing') || vendor.includes('meizu') ||
+      vendor.includes('bbk') || vendor.includes('sony mobile') || vendor.includes('htc') ||
+      vendor.includes('blackberry')) return 'phone';
 
-  // --- TV ---
+  // --- TV / CONSOLES ---
   if (vendor.includes('lg') || vendor.includes('roku') || vendor.includes('tcl') ||
       vendor.includes('hisense') || vendor.includes('sony') || vendor.includes('panasonic') ||
-      vendor.includes('philips') || vendor.includes('vestel') || vendor.includes('changhong')) return 'tv';
+      vendor.includes('philips') || vendor.includes('vestel') || vendor.includes('changhong') ||
+      vendor.includes('nintendo') || vendor.includes('vizio')) return 'tv';
 
   // --- IoT / EMBEDDED ---
   if (vendor.includes('raspberry') || vendor.includes('arduino') || vendor.includes('espressif') ||
@@ -138,6 +162,8 @@ function detectDeviceType(device: Device): DeviceType {
       vendor.includes('earda') || vendor.includes('hichip') || vendor.includes('hikvision') ||
       vendor.includes('dahua') || vendor.includes('reolink') || vendor.includes('annke') ||
       vendor.includes('amcrest') || vendor.includes('wyze') || vendor.includes('ring') ||
+      vendor.includes('belkin') || vendor.includes('murata') || vendor.includes('wemos') ||
+      vendor.includes('nest') || vendor.includes('roomba') || vendor.includes('irobot') ||
       (vendor.includes('google') && (vendor.includes('home') || vendor.includes('nest'))) ||
       (vendor.includes('philips') && vendor.includes('hue')) ||
       (vendor.includes('samsung') && vendor.includes('smart')) ||
@@ -195,17 +221,29 @@ export default function TopologiaView({ setSelectedDeviceIP }: TopologiaViewProp
   const containerRef = useRef<HTMLDivElement>(null);
   const markersRef = useRef<Map<number, L.Marker>>(new Map());
   const linesRef = useRef<L.Polyline[]>([]);
+  const clusterGroupRef = useRef<L.MarkerClusterGroup | null>(null);
   const locationRef = useRef<GeoLocation | null>(null);
+  const geoCacheRef = useRef<Map<string, GeoLocation>>(new Map());
   const devicesRef = useRef<Device[]>([]);
   const edgesRef = useRef<TopologyEdge[]>([]);
   const dataKeyRef = useRef('');
   const retryUpdateRef = useRef<() => void>(() => {});
 
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
+  const selectedDeviceRef = useRef<Device | null>(null);
   const [selectedEdges, setSelectedEdges] = useState<TopologyEdge[]>([]);
   const [networkLocation, setNetworkLocation] = useState<GeoLocation | null>(null);
   const [geoError, setGeoError] = useState<string | null>(null);
   const [stats, setStats] = useState({ devices: 0, connections: 0, suspicious: 0, totalBytes: 0 });
+  const [showExternal, setShowExternal] = useState(false);
+  const showExternalRef = useRef(false);
+
+  const toggleExternal = () => {
+    const next = !showExternal;
+    setShowExternal(next);
+    showExternalRef.current = next;
+    retryUpdateRef.current();
+  };
 
   // ---- Initialize map once ----
   useEffect(() => {
@@ -216,6 +254,7 @@ export default function TopologiaView({ setSelectedDeviceIP }: TopologiaViewProp
       zoom: 14,
       zoomControl: true,
       attributionControl: true,
+      preferCanvas: true, // Render thousands of lines instantly without DOM freeze
     });
 
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
@@ -264,11 +303,17 @@ export default function TopologiaView({ setSelectedDeviceIP }: TopologiaViewProp
       const map = mapRef.current;
       if (!map) return;
 
-      const devices = devicesRef.current;
-      const edges = edgesRef.current;
+      let devices = devicesRef.current;
+      let edges = edgesRef.current;
       const loc = locationRef.current;
 
       if (!loc || devices.length === 0) return;
+
+      if (!showExternalRef.current) {
+        devices = devices.filter(d => isPrivateIP(d.ip));
+        const validIDs = new Set(devices.map(d => d.id));
+        edges = edges.filter(e => validIDs.has(e.src_device_id) && validIDs.has(e.dst_device_id));
+      }
 
       // Clear old markers
       markersRef.current.forEach((m) => m.remove());
@@ -277,6 +322,16 @@ export default function TopologiaView({ setSelectedDeviceIP }: TopologiaViewProp
       // Clear old lines
       linesRef.current.forEach((l) => l.remove());
       linesRef.current = [];
+      
+      if (clusterGroupRef.current) {
+        map.removeLayer(clusterGroupRef.current);
+      }
+      
+      const clusterGroup = L.markerClusterGroup({
+        chunkedLoading: true,
+        maxClusterRadius: 50,
+      });
+      clusterGroupRef.current = clusterGroup;
 
       // Place devices around the network center with deterministic offsets
       // based on device count. Use a sunflower spiral so devices spread
@@ -291,58 +346,89 @@ export default function TopologiaView({ setSelectedDeviceIP }: TopologiaViewProp
         // Add a small deterministic offset per device ID for stability
         // across polls when device order changes.
         const jitter = ((dev.id * 13) % 100) / 100 * 0.0001;
-        const lat = loc.lat + (r + jitter) * Math.sin(angle);
-        const lon = loc.lon + (r + jitter) * Math.cos(angle);
+        let lat = loc.lat + (r + jitter) * Math.sin(angle);
+        let lon = loc.lon + (r + jitter) * Math.cos(angle);
+
+        // If public IP, use real GeoIP coordinates if available
+        if (!isPrivateIP(dev.ip)) {
+          const geo = geoCacheRef.current.get(dev.ip);
+          if (geo) {
+            // Apply a small jitter for IPs at the exact same location (e.g. same ISP city)
+            lat = geo.lat + jitter;
+            lon = geo.lon + jitter;
+          }
+        }
 
         const type = detectDeviceType(dev);
         const color = DEVICE_COLORS[type];
         const Icon = DEVICE_ICONS[type];
 
-        // Create a custom divIcon with the device type icon
+        // Create a custom divIcon with the precision dot design
         const iconHtml = `
           <div style="position: relative;">
             <div style="
-              width: 36px; height: 36px;
-              background: ${color}22;
-              border: 2px solid ${color};
-              border-radius: 50%;
-              display: flex; align-items: center; justify-content: center;
-              box-shadow: 0 0 12px ${color}88;
-            ">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                ${getIconSvgPath(Icon)}
-              </svg>
-            </div>
-            <div style="
-              position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%);
-              font-size: 9px; font-family: monospace; color: ${color};
-              white-space: nowrap; text-shadow: 0 0 4px #000, 0 0 4px #000;
+              position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
+              font-size: 10px; font-family: monospace; color: #fff;
+              background: rgba(0,0,0,0.6); padding: 2px 4px; border-radius: 4px;
+              white-space: nowrap; border: 1px solid ${color}44;
             ">${dev.ip}</div>
+            <div style="
+              width: 12px; height: 12px;
+              background: ${color};
+              border: 2px solid #0f172a;
+              border-radius: 50%;
+              box-shadow: 0 0 10px ${color}aa;
+              margin: 0 auto;
+            "></div>
           </div>
         `;
 
         const marker = L.marker([lat, lon], {
-          icon: L.divIcon({ html: iconHtml, className: 'topo-marker', iconSize: [36, 36], iconAnchor: [18, 18] }),
+          icon: L.divIcon({ html: iconHtml, className: 'topo-marker', iconSize: [12, 12], iconAnchor: [6, 6] }),
         });
 
         marker.on('click', () => {
           setSelectedDevice(dev);
+          selectedDeviceRef.current = dev;
           const connected = edges.filter(
             (e) => e.src_device_id === dev.id || e.dst_device_id === dev.id
           );
           setSelectedEdges(connected);
+          retryUpdateRef.current(); // Redraw map to show/hide edges for this device
         });
 
-        marker.addTo(map);
+        clusterGroup.addLayer(marker);
         markersRef.current.set(dev.id, marker);
       });
+      
+      map.addLayer(clusterGroup);
 
       // Draw edges as polylines
+      // Limit to top 250 edges by volume to avoid visual clutter and saturation
+      const maxEdgesToDraw = 250;
+      const sortedEdges = [...edges].sort((a, b) => b.bytes_count - a.bytes_count);
+      const edgesToDraw = sortedEdges.slice(0, maxEdgesToDraw);
+
       const suspiciousThreshold = 1000000; // 1MB
-      edges.forEach((edge) => {
+      const selDev = selectedDeviceRef.current;
+      
+      edgesToDraw.forEach((edge) => {
         const srcMarker = markersRef.current.get(edge.src_device_id);
         const dstMarker = markersRef.current.get(edge.dst_device_id);
         if (!srcMarker || !dstMarker) return;
+
+        const srcDev = devices.find(d => d.id === edge.src_device_id);
+        const dstDev = devices.find(d => d.id === edge.dst_device_id);
+        if (!srcDev || !dstDev) return;
+
+        const isExternalEdge = !isPrivateIP(srcDev.ip) || !isPrivateIP(dstDev.ip);
+
+        // Hide external edges unless they belong to the selected device to prevent visual saturation
+        if (isExternalEdge) {
+          if (!selDev || (edge.src_device_id !== selDev.id && edge.dst_device_id !== selDev.id)) {
+            return;
+          }
+        }
 
         const srcLatLng = srcMarker.getLatLng();
         const dstLatLng = dstMarker.getLatLng();
@@ -350,11 +436,12 @@ export default function TopologiaView({ setSelectedDeviceIP }: TopologiaViewProp
         const isSuspicious = edge.bytes_count > suspiciousThreshold;
         const color = isSuspicious ? '#ef4444' : '#38bdf8';
         const weight = Math.max(1, Math.min(4, Math.log10(edge.bytes_count + 1) * 0.5));
+        const opacity = isSuspicious ? 0.8 : 0.15; // Reduce visual clutter for normal traffic
 
         const line = L.polyline([srcLatLng, dstLatLng], {
           color,
           weight,
-          opacity: 0.7,
+          opacity,
           dashArray: '8 6',
           className: isSuspicious ? 'topo-edge topo-edge-suspicious' : 'topo-edge',
         });
@@ -390,6 +477,33 @@ export default function TopologiaView({ setSelectedDeviceIP }: TopologiaViewProp
 
         devicesRef.current = (data.nodes || []) as Device[];
         edgesRef.current = (data.edges || []) as TopologyEdge[];
+
+        // Batch GeoIP for public IPs
+        if (showExternalRef.current) {
+          const publicIPs = devicesRef.current
+            .filter(d => !isPrivateIP(d.ip))
+            .filter(d => !geoCacheRef.current.has(d.ip))
+            .map(d => d.ip);
+            
+          if (publicIPs.length > 0) {
+            try {
+              const geoRes = await fetch('/api/v1/geoip/batch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ips: publicIPs }),
+              });
+              if (geoRes.ok) {
+                const geoData = await geoRes.json();
+                geoData.forEach((g: GeoLocation) => {
+                  geoCacheRef.current.set(g.ip, g);
+                });
+              }
+            } catch (err) {
+              console.error('GeoIP batch fetch error:', err);
+            }
+          }
+        }
+
         updateMap();
       } catch (err) {
         console.error('Topology fetch error:', err);
@@ -484,12 +598,24 @@ export default function TopologiaView({ setSelectedDeviceIP }: TopologiaViewProp
               <Network className="h-4 w-4 text-[#3b82f6]" />
               <span>Mapa de Topologia en Tiempo Real</span>
             </h2>
-            {networkLocation && (
-              <div className="flex items-center gap-2 text-[11px] font-mono text-[#9ba3b4]">
-                <MapPin className="h-3 w-3 text-[#3b82f6]" />
-                <span>{networkLocation.city}, {networkLocation.country_code}</span>
-              </div>
-            )}
+            <div className="flex items-center gap-4">
+              <button
+                onClick={toggleExternal}
+                className={`text-[11px] font-mono px-3 py-1 rounded transition-colors ${
+                  showExternal
+                    ? 'bg-[#3b82f6]/20 text-[#3b82f6] border border-[#3b82f6]/30'
+                    : 'bg-[#1c2230] text-[#9ba3b4] border border-[#2a3242] hover:bg-[#2a3242]'
+                }`}
+              >
+                {showExternal ? 'Ocultar Externos' : 'Mostrar Externos'}
+              </button>
+              {networkLocation && (
+                <div className="flex items-center gap-2 text-[11px] font-mono text-[#9ba3b4]">
+                  <MapPin className="h-3 w-3 text-[#3b82f6]" />
+                  <span>{networkLocation.city}, {networkLocation.country_code}</span>
+                </div>
+              )}
+            </div>
           </div>
 
           <div

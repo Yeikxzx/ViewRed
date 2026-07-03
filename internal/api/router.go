@@ -14,6 +14,7 @@ import (
 	"github.com/viewred/viewred/internal/geoip"
 	"github.com/viewred/viewred/internal/health"
 	"github.com/viewred/viewred/internal/resolver"
+	"github.com/viewred/viewred/internal/rules"
 	"github.com/viewred/viewred/internal/sse"
 	"github.com/viewred/viewred/internal/storage"
 )
@@ -69,6 +70,7 @@ type RouterDeps struct {
 	// unbloated. The production wire-up always sets this.
 	Resolver   *resolver.Resolver
 	CORSConfig middleware.CORSConfig
+	RulesEngine *rules.Engine
 }
 
 // NewRouterWithDeps builds a router that wires every middleware and
@@ -106,8 +108,8 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 		v1.GET("/dashboard/top-talkers", handlers.TopTalkers(deps.Querier))
 		v1.GET("/dashboard/protocols", handlers.ProtocolDistribution(deps.Querier))
 		v1.GET("/rules", handlers.GetRules(deps.Querier))
-		v1.POST("/rules", handlers.CreateRule(deps.Querier))
-		v1.DELETE("/rules/:id", handlers.DeleteRule(deps.Querier))
+		v1.POST("/rules", handlers.CreateRule(deps.Querier, deps.RulesEngine))
+		v1.DELETE("/rules/:id", handlers.DeleteRule(deps.Querier, deps.RulesEngine))
 		v1.GET("/packets", handlers.PacketsListWithResolver(deps.Querier, deps.Resolver))
 		v1.GET("/devices", handlers.DevicesList(deps.Querier))
 		v1.GET("/alerts", handlers.AlertsList(deps.Querier))
@@ -153,6 +155,7 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 		if deps.GeoIP != nil {
 			geoipDeps := handlers.GeoIPDeps{GeoIP: deps.GeoIP}
 			v1.GET("/geoip", handlers.GeoIPNetworkLocation(geoipDeps))
+			v1.POST("/geoip/batch", handlers.GeoIPLookupBatch(geoipDeps))
 			v1.GET("/geoip/:ip", handlers.GeoIPLookup(geoipDeps))
 		}
 

@@ -2,7 +2,7 @@ package storage
 
 import (
 	"context"
-	"net"
+	"log"
 )
 
 // QueryTopology fetches all devices and the most recent topology edges.
@@ -13,7 +13,7 @@ func (s *Storage) QueryTopology(ctx context.Context) ([]Device, []TopologyEdge, 
 
 	// 1. Fetch all known devices
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, ip::text, mac, vendor, hostname, first_seen, last_seen, risk_score
+		`SELECT id, ip::text, COALESCE(mac::text, ''), COALESCE(vendor, ''), COALESCE(hostname, ''), first_seen, last_seen, COALESCE(risk_score, 0)
 		 FROM devices
 		 ORDER BY id ASC`)
 	if err != nil {
@@ -33,19 +33,6 @@ func (s *Storage) QueryTopology(ctx context.Context) ([]Device, []TopologyEdge, 
 	if err := rows.Err(); err != nil {
 		return nil, nil, err
 	}
-
-	// Filter out public / external IPs so the topology only shows
-	// local network devices. The discovery engine now skips public
-	// IPs too, but this query-side filter cleans up any that were
-	// inserted before the engine fix.
-	filtered := devices[:0]
-	for _, d := range devices {
-		ip, _, err := net.ParseCIDR(d.IP)
-		if err == nil && (ip.IsPrivate() || ip.IsLinkLocalUnicast()) {
-			filtered = append(filtered, d)
-		}
-	}
-	devices = filtered
 
 	// 2. Fetch edges
 	edgeRows, err := s.db.QueryContext(ctx,
@@ -85,5 +72,6 @@ func (s *Storage) QueryTopology(ctx context.Context) ([]Device, []TopologyEdge, 
 	}
 	edges = filteredEdges
 
+	log.Printf("QueryTopology: fetched %d devices", len(devices))
 	return devices, edges, nil
 }

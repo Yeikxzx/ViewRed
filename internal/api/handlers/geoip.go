@@ -40,3 +40,28 @@ func GeoIPLookup(deps GeoIPDeps) gin.HandlerFunc {
 		c.JSON(http.StatusOK, loc)
 	}
 }
+
+// GeoIPLookupBatch handles POST /api/v1/geoip/batch.
+// Resolves a list of IPs and returns their geographic locations.
+func GeoIPLookupBatch(deps GeoIPDeps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req struct {
+			IPs []string `json:"ips"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
+			return
+		}
+
+		locations, err := deps.GeoIP.LookupBatch(req.IPs)
+		if err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+			return
+		}
+		
+		if locations == nil {
+			locations = []geoip.Location{}
+		}
+		c.JSON(http.StatusOK, locations)
+	}
+}
