@@ -195,8 +195,19 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
   // result. The interval is cleared on unmount to avoid leaking
   // timers into the next test or the next route the user navigates
   // to.
+  //
+  // Failure handling: a failed poll or a non-2xx response records the
+  // error in `healthError` / `lastError` so the UI shows it, but does
+  // NOT clobber a previously trusted 'paused' SSE state. Only when
+  // the existing state is something other than 'paused' do we degrade
+  // to 'unknown'.
   useEffect(() => {
     let cancelled = false;
+
+    const degradeStatus = (): CaptureStatus => {
+      const current = useSSEStore.getState().captureStatus;
+      return current === 'paused' ? 'paused' : 'unknown';
+    };
 
     const poll = async () => {
       if (cancelled || inFlightRef.current) return;
@@ -205,12 +216,11 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
         const res = await fetch(HEALTH_URL);
         if (cancelled) return;
         if (!res.ok) {
-          // Non-2xx: treat as "unknown" status + log the HTTP code.
-          // We don't throw here so a transient 503 doesn't break
-          // the poll loop.
+          // Non-2xx: record the HTTP error truthfully. Preserve a
+          // previously trusted 'paused' state across transient 503s.
           setHealthError(`HTTP ${res.status}`);
           setStoreLastError(`Health endpoint returned ${res.status}`);
-          setStoreCaptureStatus('unknown');
+          setStoreCaptureStatus(degradeStatus());
           return;
         }
         const body = (await res.json()) as HealthReport;
@@ -230,7 +240,7 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
         const msg = err instanceof Error ? err.message : 'fetch failed';
         setHealthError(msg);
         setStoreLastError(msg);
-        setStoreCaptureStatus('unknown');
+        setStoreCaptureStatus(degradeStatus());
       } finally {
         inFlightRef.current = false;
         // Mark "we have polled" regardless of success/failure so the

@@ -296,6 +296,76 @@ describe('CapturaView captureStatus from health', () => {
     });
     expect(useSSEStore.getState().captureStatus).toBe('unknown');
   });
+
+  it('preserves "paused" status and records an error on a non-2xx health response', async () => {
+    // A transient 503 must not overwrite a previously trusted paused
+    // state, but the error must still be surfaced via lastError.
+    vi.useFakeTimers();
+    useSSEStore.setState({ captureStatus: 'paused' });
+    stubFetchSequence([
+      jsonResponse({ status: 'down', uptime_seconds: 1, subsystems: [] }, { status: 503 }),
+    ]);
+    renderCaptura();
+
+    await waitForState(
+      () =>
+        useSSEStore.getState().captureStatus === 'paused' &&
+        /503/i.test(useSSEStore.getState().lastError ?? ''),
+    );
+    const state = useSSEStore.getState();
+    expect(state.captureStatus).toBe('paused');
+    expect(state.lastError).toMatch(/503/i);
+  });
+
+  it('preserves "paused" status and records an error when the health fetch rejects', async () => {
+    vi.useFakeTimers();
+    useSSEStore.setState({ captureStatus: 'paused' });
+    stubFetchSequence([new TypeError('NetworkError when attempting to fetch resource')]);
+    renderCaptura();
+
+    await waitForState(
+      () =>
+        useSSEStore.getState().captureStatus === 'paused' &&
+        /network/i.test(useSSEStore.getState().lastError ?? ''),
+    );
+    const state = useSSEStore.getState();
+    expect(state.captureStatus).toBe('paused');
+    expect(state.lastError).toMatch(/network/i);
+  });
+
+  it('degrades a non-paused state to "unknown" when the health fetch rejects', async () => {
+    vi.useFakeTimers();
+    useSSEStore.setState({ captureStatus: 'running' });
+    stubFetchSequence([new TypeError('Failed to fetch')]);
+    renderCaptura();
+
+    await waitForState(
+      () =>
+        useSSEStore.getState().captureStatus === 'unknown' &&
+        /failed/i.test(useSSEStore.getState().lastError ?? ''),
+    );
+    const state = useSSEStore.getState();
+    expect(state.captureStatus).toBe('unknown');
+    expect(state.lastError).toMatch(/failed/i);
+  });
+
+  it('degrades a non-paused state to "unknown" on a non-2xx health response', async () => {
+    vi.useFakeTimers();
+    useSSEStore.setState({ captureStatus: 'running' });
+    stubFetchSequence([
+      jsonResponse({ status: 'down', uptime_seconds: 1, subsystems: [] }, { status: 503 }),
+    ]);
+    renderCaptura();
+
+    await waitForState(
+      () =>
+        useSSEStore.getState().captureStatus === 'unknown' &&
+        /503/i.test(useSSEStore.getState().lastError ?? ''),
+    );
+    const state = useSSEStore.getState();
+    expect(state.captureStatus).toBe('unknown');
+    expect(state.lastError).toMatch(/503/i);
+  });
 });
 
 // ---------------------------------------------------------------------------
