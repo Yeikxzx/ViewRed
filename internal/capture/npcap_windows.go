@@ -69,24 +69,31 @@ func (c *NpcapCapture) Start(iface string, bpfFilter string) error {
 	c.handle = handle
 	c.stats.StartedAt = time.Now()
 	c.stats.LastError = nil // clear stale error from prior run
+	c.stats.Running = true
 	c.running = true
 
-	go c.readLoop()
+	go c.readLoop(c.stopCh)
 	return nil
 }
 
 // readLoop pulls packets from gopacket and emits PacketEvent values
 // until Stop is called. It is the only place that touches c.handle.
-func (c *NpcapCapture) readLoop() {
+func (c *NpcapCapture) readLoop(stopCh <-chan struct{}) {
 	src := gopacket.NewPacketSource(c.handle, c.handle.LinkType())
 	for {
 		select {
-		case <-c.stopCh:
+		case <-stopCh:
 			return
 		default:
 		}
 		packet, err := src.NextPacket()
 		if err != nil {
+			// If we got an error because Stop() closed the handle, exit immediately
+			select {
+			case <-stopCh:
+				return
+			default:
+			}
 			c.stats.LastError = err
 			c.stats.PacketsDropped++
 			continue
@@ -97,7 +104,7 @@ func (c *NpcapCapture) readLoop() {
 		event := packetToEvent(packet)
 		select {
 		case c.packets <- event:
-		case <-c.stopCh:
+		case <-stopCh:
 			return
 		default:
 			// Channel full: drop the packet rather than block
@@ -117,6 +124,7 @@ func (c *NpcapCapture) Stop() error {
 		return errors.New("npcap: not running")
 	}
 	c.running = false
+	c.stats.Running = false
 	close(c.stopCh)
 	if c.handle != nil {
 		c.handle.Close()

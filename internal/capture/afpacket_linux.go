@@ -69,9 +69,10 @@ func (c *AFPacketCapture) Start(iface string, bpfFilter string) error {
 	c.handle = handle
 	c.stats.StartedAt = time.Now()
 	c.stats.LastError = nil // clear stale error from prior run
+	c.stats.Running = true
 	c.running = true
 
-	go c.readLoop()
+	go c.readLoop(c.stopCh)
 	return nil
 }
 
@@ -80,16 +81,22 @@ func (c *AFPacketCapture) Start(iface string, bpfFilter string) error {
 // The gopacket.Packet → PacketEvent conversion is delegated to
 // packetToEvent in packet_event.go so the same logic runs on both
 // Windows and Linux.
-func (c *AFPacketCapture) readLoop() {
+func (c *AFPacketCapture) readLoop(stopCh <-chan struct{}) {
 	src := gopacket.NewPacketSource(c.handle, c.handle.LinkType())
 	for {
 		select {
-		case <-c.stopCh:
+		case <-stopCh:
 			return
 		default:
 		}
 		packet, err := src.NextPacket()
 		if err != nil {
+			// If we got an error because Stop() closed the handle, exit immediately
+			select {
+			case <-stopCh:
+				return
+			default:
+			}
 			c.stats.LastError = err
 			c.stats.PacketsDropped++
 			continue
@@ -100,7 +107,7 @@ func (c *AFPacketCapture) readLoop() {
 		event := packetToEvent(packet)
 		select {
 		case c.packets <- event:
-		case <-c.stopCh:
+		case <-stopCh:
 			return
 		default:
 			// Channel full: drop the packet rather than block
@@ -120,6 +127,7 @@ func (c *AFPacketCapture) Stop() error {
 		return errors.New("afpacket: not running")
 	}
 	c.running = false
+	c.stats.Running = false
 	close(c.stopCh)
 	if c.handle != nil {
 		c.handle.Close()

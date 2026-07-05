@@ -33,6 +33,7 @@ func (m *MockCapture) Start(iface string, bpfFilter string) error {
 		return errors.New("mock: already running")
 	}
 	m.running = true
+	m.stats.Running = true
 	m.stats.StartedAt = time.Now()
 	return nil
 }
@@ -45,6 +46,7 @@ func (m *MockCapture) Stop() error {
 		return errors.New("mock: not running")
 	}
 	m.running = false
+	m.stats.Running = false
 	close(m.ch)
 	return nil
 }

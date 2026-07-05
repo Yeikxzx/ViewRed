@@ -198,6 +198,15 @@ func StopCapture(deps CaptureConfigDeps) gin.HandlerFunc {
 
 		if err := h.Capturer.Stop(); err != nil {
 			if err.Error() == "npcap: not running" || err.Error() == "afpacket: not running" {
+				// Broadcast paused status even when already stopped,
+				// so the frontend gets the correct state.
+				if statusJSON, err := json.Marshal(map[string]string{"status": "paused"}); err == nil {
+					h.Broker.Broadcast(sse.Event{
+						Name:  "capture-status",
+						Topic: "capture-status",
+						Data:  statusJSON,
+					})
+				}
 				c.JSON(http.StatusOK, gin.H{"message": "Capture already stopped"})
 				return
 			}

@@ -42,6 +42,7 @@ type CaptureStats struct {
 	BytesTotal     uint64
 	StartedAt      time.Time
 	LastError      error
+	Running        bool // true while capture is actively capturing packets
 }
 
 // PacketCapture is the interface every capture driver implements. The caller

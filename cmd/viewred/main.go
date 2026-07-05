@@ -225,6 +225,9 @@ func main() {
 	}
 	rg.Add("capture", func(ctx context.Context) error {
 		stats := cap.Stats()
+		if !stats.Running {
+			return errors.New("capture is not running")
+		}
 		if stats.LastError != nil {
 			return stats.LastError
 		}
@@ -349,7 +352,7 @@ func main() {
 						}
 					}
 
-					// 2. ML Engine
+					// 2. ML Engine (ONNX-based anomaly detection)
 					mlAlert, _ := mlEngine.Evaluate(e)
 					if mlAlert != nil {
 						if writer != nil {

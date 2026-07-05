@@ -278,11 +278,19 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
         bpf: bpfFilter,
         snaplen: snaplen,
       });
-      // Restart capture with the new interface so the change takes effect
-      // immediately without requiring a full backend restart.
-      await restartCapture();
-      setShowAppliedToast(true);
-      setTimeout(() => setShowAppliedToast(false), 3000);
+
+      if (captureStatus === 'paused') {
+        // La captura está pausada — solo guardamos la config. El cambio
+        // aplica cuando el usuario reanude manualmente la captura.
+        toast.success("Configuración guardada. Se aplicará al reanudar la captura.");
+      } else {
+        // La captura no está corriendo (estado unknown / nunca arrancó)
+        // o el backend no reporta estado — reiniciamos para que el cambio
+        // tenga efecto de inmediato.
+        await restartCapture();
+        setShowAppliedToast(true);
+        setTimeout(() => setShowAppliedToast(false), 3000);
+      }
     } catch (err) {
       toast.error("Error al guardar la configuración");
     } finally {
