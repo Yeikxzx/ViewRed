@@ -298,6 +298,9 @@ func main() {
 		defer mlEngine.Close()
 	}
 
+	// Flood detector — statistical heuristics independent of ONNX model.
+	floodDetector := ml.NewFloodDetector()
+
 	// Start evaluation worker pool
 	// We use 4 workers to parallelize ML and Rules evaluation, preventing the bridge from blocking.
 	evalDone := make(chan struct{})
@@ -321,6 +324,9 @@ func main() {
 					if discEngine != nil {
 						discEngine.Process(ctx, e)
 					}
+
+					// 0b. Flood Detector — record every packet for rate analysis
+					floodDetector.Record(e)
 
 					// 1. Rule Engine
 					matches := rulesEngine.Evaluate(e)
@@ -352,7 +358,22 @@ func main() {
 						}
 					}
 
-					// 2. ML Engine (ONNX-based anomaly detection)
+					// 2. Flood Detector — evaluate thresholds
+					floodAlert := floodDetector.Evaluate(e)
+					if floodAlert != nil {
+						if writer != nil {
+							_ = writer.WriteAlert(ctx, *floodAlert)
+							if alertJSON, err := json.Marshal(floodAlert); err == nil {
+								wire.Broker.Broadcast(sse.Event{
+									Name:  "alert",
+									Topic: "alerts",
+									Data:  alertJSON,
+								})
+							}
+						}
+					}
+
+					// 3. ML Engine (ONNX-based anomaly detection)
 					mlAlert, _ := mlEngine.Evaluate(e)
 					if mlAlert != nil {
 						if writer != nil {
