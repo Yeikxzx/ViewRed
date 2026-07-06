@@ -513,7 +513,6 @@ func main() {
 		Handler: wire.Router,
 	}
 	log.Printf("ViewRed %s listening on http://%s", version.Version, addr)
-	openBrowser(addr)
 
 	// Start auto-updater in background. It checks for updates every 6 hours.
 	// On dev builds ("0.1.0-dev") the updater silently disables itself.
@@ -531,6 +530,12 @@ func main() {
 			serverErr <- err
 		}
 		close(serverErr)
+	}()
+
+	// Open browser after server is ready.
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		openBrowser(addr)
 	}()
 
 	select {
