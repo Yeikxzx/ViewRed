@@ -273,3 +273,69 @@ func TestPacketToEvent_NoApplicationLayer(t *testing.T) {
 		t.Fatal("Timestamp should be non-zero")
 	}
 }
+
+// buildTCPPacket constructs a synthetic Ethernet/IPv4/TCP packet with the
+// requested SYN/ACK flags. It is used by the TCP flag propagation tests below.
+func buildTCPPacket(t *testing.T, syn bool, ack bool) gopacket.Packet {
+	t.Helper()
+
+	eth := &layers.Ethernet{
+		SrcMAC:       net.HardwareAddr{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x01},
+		DstMAC:       net.HardwareAddr{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x02},
+		EthernetType: layers.EthernetTypeIPv4,
+	}
+	ip := &layers.IPv4{
+		Version:  4,
+		IHL:      5,
+		SrcIP:    net.ParseIP("10.0.0.1"),
+		DstIP:    net.ParseIP("10.0.0.2"),
+		Protocol: layers.IPProtocolTCP,
+		TTL:      64,
+	}
+	tcp := &layers.TCP{SrcPort: 12345, DstPort: 22, SYN: syn, ACK: ack}
+	tcp.SetNetworkLayerForChecksum(ip)
+
+	buf := gopacket.NewSerializeBuffer()
+	opts := gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}
+	if err := gopacket.SerializeLayers(buf, opts, eth, ip, tcp); err != nil {
+		t.Fatalf("SerializeLayers: %v", err)
+	}
+	pkt := gopacket.NewPacket(buf.Bytes(), layers.LinkTypeEthernet, gopacket.NoCopy)
+	pkt.Metadata().Timestamp = time.Now()
+	pkt.Metadata().CaptureLength = len(buf.Bytes())
+	pkt.Metadata().Length = len(buf.Bytes())
+	return pkt
+}
+
+func TestPacketToEvent_TCPSynTrue(t *testing.T) {
+	pkt := buildTCPPacket(t, true, false)
+	ev := packetToEvent(pkt)
+	if !ev.TCPSyn {
+		t.Fatalf("TCPSyn: got false, want true for SYN packet")
+	}
+	if ev.TCPAck {
+		t.Fatalf("TCPAck: got true, want false for SYN-only packet")
+	}
+}
+
+func TestPacketToEvent_TCPSynFalse(t *testing.T) {
+	pkt := buildTCPPacket(t, false, true)
+	ev := packetToEvent(pkt)
+	if ev.TCPSyn {
+		t.Fatalf("TCPSyn: got true, want false for ACK-only packet")
+	}
+	if !ev.TCPAck {
+		t.Fatalf("TCPAck: got false, want true for ACK-only packet")
+	}
+}
+
+func TestPacketToEvent_TCPSynAck(t *testing.T) {
+	pkt := buildTCPPacket(t, true, true)
+	ev := packetToEvent(pkt)
+	if !ev.TCPSyn {
+		t.Fatalf("TCPSyn: got false, want true for SYN+ACK packet")
+	}
+	if !ev.TCPAck {
+		t.Fatalf("TCPAck: got false, want true for SYN+ACK packet")
+	}
+}

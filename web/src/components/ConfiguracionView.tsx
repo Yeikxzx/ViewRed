@@ -1,22 +1,40 @@
-import { useState, useEffect } from 'react';
-import { toast } from 'sonner';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
-  Settings,
-  HardDrive,
-  Cpu,
-  Database,
-  Terminal,
-  Play,
   Check,
+  Cpu,
+  HardDrive,
+  Info,
+  Plus,
   RefreshCw,
   ShieldAlert,
+  Terminal,
   Trash2,
-  Plus,
-  Info
+  X,
 } from 'lucide-react';
+import { notify } from '../lib/notify';
+
+type SettingsTab = 'captura' | 'integracion' | 'reglas' | 'logs';
+
+interface SettingFieldProps {
+  label: string;
+  hint?: string;
+  children: ReactNode;
+}
+
+function SettingField({ label, hint, children }: SettingFieldProps) {
+  return (
+    <div className="rounded-lg border border-[#263041] bg-[#0a0e14] p-4">
+      <label className="mb-2 block font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-[#748099]">
+        {label}
+      </label>
+      {children}
+      {hint && <p className="mt-2 font-mono text-[10px] leading-relaxed text-[#657089]">{hint}</p>}
+    </div>
+  );
+}
 
 export default function ConfiguracionView() {
-  const [activeTab, setActiveTab] = useState<'captura' | 'integracion' | 'reglas' | 'logs'>('captura');
+  const [activeTab, setActiveTab] = useState<SettingsTab>('captura');
   const [ollamaURL, setOllamaURL] = useState(localStorage.getItem('viewred.ollama_url') || 'http://127.0.0.1:11434');
   const [ollamaConnected, setOllamaConnected] = useState(false);
   const [testingConnection, setTestingConnection] = useState(false);
@@ -25,11 +43,8 @@ export default function ConfiguracionView() {
   const [autoArchive, setAutoArchive] = useState(localStorage.getItem('viewred.auto_archive') !== 'false');
   const [pcapRetention, setPcapRetention] = useState(localStorage.getItem('viewred.pcap_retention') || '30');
   const [metadataRetention, setMetadataRetention] = useState(localStorage.getItem('viewred.metadata_retention') || '90');
-  
   const [showSyntaxHelp, setShowSyntaxHelp] = useState(false);
-  
   const [saveToast, setSaveToast] = useState(false);
-
   const [customRules, setCustomRules] = useState<{ id: number; rule_text: string; enabled: boolean }[]>([]);
   const [newRuleText, setNewRuleText] = useState('');
 
@@ -52,11 +67,11 @@ export default function ConfiguracionView() {
         const rule = await res.json();
         setCustomRules((prev) => [...prev, rule]);
         setNewRuleText('');
-        toast.success("Regla añadida con éxito");
+        notify.success('Regla anadida con exito');
       }
     } catch (err) {
       console.error(err);
-      toast.error("Error al añadir la regla");
+      notify.error('Error al anadir la regla');
     }
   };
 
@@ -65,11 +80,11 @@ export default function ConfiguracionView() {
       const res = await fetch(`/api/v1/rules/${id}`, { method: 'DELETE' });
       if (res.ok) {
         setCustomRules((prev) => prev.filter((r) => r.id !== id));
-        toast.success("Regla eliminada con éxito");
+        notify.success('Regla eliminada con exito');
       }
     } catch (err) {
       console.error(err);
-      toast.error("Error al eliminar la regla");
+      notify.error('Error al eliminar la regla');
     }
   };
 
@@ -81,15 +96,15 @@ export default function ConfiguracionView() {
       const data = await res.json();
       if (res.ok && data.available) {
         setOllamaConnected(true);
-        toast.success(`Conexion exitosa: ${data.model} disponible`);
+        notify.success(`Conexion exitosa: ${data.model} disponible`);
       } else {
         setOllamaConnected(false);
-        toast.error(`Modelo no disponible: ${data.error || 'ver consola'}`);
+        notify.error(`Modelo no disponible: ${data.error || 'ver consola'}`);
         console.error('Ollama test failed:', data);
       }
     } catch (err) {
       setOllamaConnected(false);
-      toast.error(`Error de conexion: ${err instanceof Error ? err.message : 'desconocido'}`);
+      notify.error(`Error de conexion: ${err instanceof Error ? err.message : 'desconocido'}`);
       console.error('Ollama test error:', err);
     } finally {
       setTestingConnection(false);
@@ -97,10 +112,6 @@ export default function ConfiguracionView() {
   };
 
   const handleSaveConfig = () => {
-    // Persist client-side preferences to localStorage so they survive
-    // a page reload. The URL/paths shown in this panel come from the
-    // backend's config.yaml — to change those, edit the file and
-    // restart the ViewRed service.
     try {
       localStorage.setItem('viewred.ollama_url', ollamaURL);
       localStorage.setItem('viewred.nmap_path', nmapPath);
@@ -109,7 +120,7 @@ export default function ConfiguracionView() {
       localStorage.setItem('viewred.pcap_retention', pcapRetention);
       localStorage.setItem('viewred.metadata_retention', metadataRetention);
     } catch {
-      // localStorage may be disabled (e.g. private mode); non-fatal.
+      // localStorage may be disabled; settings still remain in memory.
     }
     setSaveToast(true);
     setTimeout(() => setSaveToast(false), 2500);
@@ -122,337 +133,327 @@ export default function ConfiguracionView() {
     '[10:45:06] WARN Interface eth1 is down, skipping packet capture.',
     '[10:45:07] INFO Establishing connection to Ollama at http://127.0.0.1:11434...',
     '[10:45:08] OK AI Assistant ready. Model: llama3.',
-    '[11:12:45] INFO User \'admin\' accessed settings endpoint.',
+    '[11:12:45] INFO User admin accessed settings endpoint.',
     '[14:02:11] OK Executing local ARP listener on eth0 node...',
     '[14:02:12] INFO Loaded active network topology node parameters.',
   ];
 
+  const tabs = [
+    { key: 'captura' as const, label: 'Almacenamiento', detail: 'Retencion y archivado', Icon: HardDrive },
+    { key: 'integracion' as const, label: 'Integraciones', detail: 'Ollama, Nmap, Suricata', Icon: Cpu },
+    { key: 'reglas' as const, label: 'Reglas', detail: `${customRules.length} personalizadas`, Icon: ShieldAlert },
+    { key: 'logs' as const, label: 'Logs', detail: 'Estado del sistema', Icon: Terminal },
+  ];
+
   return (
-    <div id="settings-view-wrapper" className="grid grid-cols-1 lg:grid-cols-12 gap-6 text-left font-sans">
-      {/* Sidebar internal tab options: 4 Cols */}
-      <div className="lg:col-span-3 space-y-1 bg-[#131820] border border-[#2a3242] p-2.5 rounded-lg h-fit select-none">
-        <button
-          onClick={() => setActiveTab('captura')}
-          className={`w-full flex items-center gap-2.5 py-2 px-3.5 rounded text-xs font-mono text-left transition-all ${
-            activeTab === 'captura' ? 'bg-[#1c2230] text-[#3b82f6] font-bold' : 'text-[#9ba3b4] hover:text-white hover:bg-[#131820]/50'
-          }`}
-        >
-          <HardDrive className="h-4 w-4" />
-          <span>Almacenamiento & Retención</span>
-        </button>
-        <button
-          onClick={() => setActiveTab('integracion')}
-          className={`w-full flex items-center gap-2.5 py-2 px-3.5 rounded text-xs font-mono text-left transition-all ${
-            activeTab === 'integracion' ? 'bg-[#1c2230] text-[#3b82f6] font-bold' : 'text-[#9ba3b4] hover:text-white hover:bg-[#131820]/50'
-          }`}
-        >
-          <Cpu className="h-4 w-4" />
-          <span>IA Integración & Rutas</span>
-        </button>
-        <button
-          onClick={() => setActiveTab('reglas')}
-          className={`w-full flex items-center gap-2.5 py-2 px-3.5 rounded text-xs font-mono text-left transition-all ${
-            activeTab === 'reglas' ? 'bg-[#1c2230] text-[#3b82f6] font-bold' : 'text-[#9ba3b4] hover:text-white hover:bg-[#131820]/50'
-          }`}
-        >
-          <ShieldAlert className="h-4 w-4" />
-          <span>Reglas de Detección</span>
-        </button>
-        <button
-          onClick={() => setActiveTab('logs')}
-          className={`w-full flex items-center gap-2.5 py-2 px-3.5 rounded text-xs font-mono text-left transition-all ${
-            activeTab === 'logs' ? 'bg-[#1c2230] text-[#3b82f6] font-bold' : 'text-[#9ba3b4] hover:text-white hover:bg-[#131820]/50'
-          }`}
-        >
-          <Terminal className="h-4 w-4" />
-          <span>Logs del Sistema</span>
-        </button>
-      </div>
-
-      {/* Configurations actual form body: 8 Cols */}
-      <div className="lg:col-span-9 space-y-6">
-        <div className="bg-[#131820] border border-[#2a3242] p-5 rounded-lg h-fit space-y-5">
-          {/* Almacenamiento & Retencion Tab */}
-          {activeTab === 'captura' && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 border-b border-[#2a3242] pb-2.5 mb-1">
-                <HardDrive className="h-4 w-4 text-[#3b82f6]" />
-                <span className="font-sans font-bold text-sm text-[#e4e7eb]">
-                  Almacenamiento y Retención
-                </span>
-              </div>
-
-              {/* PCAP limit */}
-              <div className="space-y-1">
-                <label className="text-[11px] font-mono text-[#9ba3b4] block">RETENCIÓN DE LOGS DE RED (PCAPs)</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    value={pcapRetention}
-                    onChange={(e) => setPcapRetention(e.target.value)}
-                    className="bg-[#0a0e14] border border-[#2a3242] text-xs text-[#e4e7eb] rounded p-2 w-24 outline-none font-mono"
-                  />
-                  <span className="text-xs text-[#9ba3b4]">días</span>
-                </div>
-                <span className="text-[9px] font-mono text-[#5c6473] block leading-tight">
-                  Determina cuándo se barren las capturas completas en disco de forma automática.
-                </span>
-              </div>
-
-              {/* Metadata limit */}
-              <div className="space-y-1">
-                <label className="text-[11px] font-mono text-[#9ba3b4] block">RETENCIÓN DE ALERTAS (METADATOS)</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    value={metadataRetention}
-                    onChange={(e) => setMetadataRetention(e.target.value)}
-                    className="bg-[#0a0e14] border border-[#2a3242] text-xs text-[#e4e7eb] rounded p-2 w-24 outline-none font-mono"
-                  />
-                  <span className="text-xs text-[#9ba3b4]">días</span>
-                </div>
-                <span className="text-[9px] font-mono text-[#5c6473] block leading-tight">
-                  Logs de alertas de Suricata e historiales guardados de anomalías lógicas.
-                </span>
-              </div>
-
-              {/* AWS opt-in compression check */}
-              <div className="flex items-center justify-between border-t border-[#1c2230] pt-4 select-none">
-                <div className="space-y-1 text-left">
-                  <span className="text-xs font-sans font-semibold text-[#e4e7eb] block">Auto-Archivado S3 / Cold Storage</span>
-                  <span className="text-[10px] text-[#5c6473] font-mono block">Mueve logs antiguos a la nube en lugar de eliminarlos permanentemente.</span>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={autoArchive}
-                  onChange={(e) => setAutoArchive(e.target.checked)}
-                  className="accent-[#3b82f6] h-4 w-4"
-                />
-              </div>
-            </div>
-          )}
-
-          {/* AI Integrations Tab */}
-          {activeTab === 'integracion' && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 border-b border-[#2a3242] pb-2.5 mb-1">
-                <Cpu className="h-4 w-4 text-[#3b82f6]" />
-                <span className="font-sans font-bold text-sm text-[#e4e7eb] flex-1">
-                  Integraciones y Rutas del Sistema
-                </span>
+    <div id="settings-view-wrapper" className="grid grid-cols-1 gap-5 text-left font-sans lg:grid-cols-12">
+      <aside className="lg:col-span-3">
+        <div className="sticky top-0 rounded-lg border border-[#263041] bg-[#111720] p-2.5 select-none">
+          <div className="mb-2 border-b border-[#263041] px-2 py-2">
+            <span className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-[#657089]">Centro de control</span>
+            <p className="mt-1 text-xs text-[#aab6c9]">Preferencias locales y reglas operativas.</p>
+          </div>
+          <nav className="space-y-1">
+            {tabs.map(({ key, label, detail, Icon }) => {
+              const active = activeTab === key;
+              return (
                 <button
+                  key={key}
                   type="button"
-                  onClick={() => setShowSyntaxHelp(true)}
-                  className="text-[#9ba3b4] hover:text-white transition-colors flex items-center gap-1.5 text-xs font-mono bg-[#1c2230] px-2 py-1 rounded"
+                  onClick={() => setActiveTab(key)}
+                  className={`w-full rounded-lg border p-3 text-left transition-all ${
+                    active
+                      ? 'border-blue-400/35 bg-blue-500/10 text-[#f8fafc]'
+                      : 'border-transparent text-[#8792a8] hover:border-[#263041] hover:bg-[#151c27] hover:text-[#e5edf8]'
+                  }`}
                 >
-                  <Info className="h-3.5 w-3.5" />
-                  <span>Sintaxis OS</span>
+                  <div className="flex items-center gap-3">
+                    <div className={`rounded-md border p-2 ${active ? 'border-blue-400/30 bg-blue-500/10 text-blue-300' : 'border-[#263041] bg-[#0a0e14] text-[#657089]'}`}>
+                      <Icon className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="block text-xs font-bold">{label}</span>
+                      <span className="block truncate font-mono text-[10px] text-[#657089]">{detail}</span>
+                    </div>
+                  </div>
                 </button>
-              </div>
+              );
+            })}
+          </nav>
+        </div>
+      </aside>
 
-              {/* Ollama API Endpoint URL */}
-              <div className="space-y-1">
-                <label className="text-[11px] font-mono text-[#9ba3b4] block">OLLAMA ENDPOINT URL (LOCAL LLM)</label>
-                <div className="flex gap-2.5">
-                  <input
-                    type="text"
-                    value={ollamaURL}
-                    onChange={(e) => setOllamaURL(e.target.value)}
-                    className="bg-[#0a0e14] border border-[#2a3242] focus:border-[#3b82f6] text-xs text-[#e4e7eb] rounded p-2 outline-none font-mono flex-1"
-                  />
+      <main className="space-y-5 lg:col-span-9">
+        <section className="rounded-lg border border-[#263041] bg-[#111720]">
+          <header className="flex flex-col gap-2 border-b border-[#263041] bg-[#0a0e14] p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-sm font-bold text-[#f8fafc]">
+                {tabs.find((tab) => tab.key === activeTab)?.label}
+              </h2>
+              <p className="mt-1 font-mono text-[11px] text-[#657089]">
+                Cambios guardados en preferencias locales; rutas de backend requieren reinicio del servicio.
+              </p>
+            </div>
+            {activeTab === 'integracion' && (
+              <button
+                type="button"
+                onClick={() => setShowSyntaxHelp(true)}
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-[#263041] px-3 font-mono text-xs text-[#aab6c9] transition-all hover:border-blue-400/35 hover:bg-[#182131] hover:text-white"
+              >
+                <Info className="h-3.5 w-3.5" />
+                Sintaxis OS
+              </button>
+            )}
+          </header>
+
+          <div className="space-y-4 p-4">
+            {activeTab === 'captura' && (
+              <>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <SettingField
+                    label="Retencion de logs de red"
+                    hint="Determina cuando se barren las capturas completas en disco de forma automatica."
+                  >
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        value={pcapRetention}
+                        onChange={(event) => setPcapRetention(event.target.value)}
+                        className="h-10 w-28 rounded-md border border-[#263041] bg-[#111720] px-3 font-mono text-xs text-[#e5edf8] outline-none focus:border-blue-400/70"
+                      />
+                      <span className="font-mono text-xs text-[#aab6c9]">dias</span>
+                    </div>
+                  </SettingField>
+
+                  <SettingField
+                    label="Retencion de alertas"
+                    hint="Controla cuanto tiempo se conservan metadatos, historiales y alertas."
+                  >
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        value={metadataRetention}
+                        onChange={(event) => setMetadataRetention(event.target.value)}
+                        className="h-10 w-28 rounded-md border border-[#263041] bg-[#111720] px-3 font-mono text-xs text-[#e5edf8] outline-none focus:border-blue-400/70"
+                      />
+                      <span className="font-mono text-xs text-[#aab6c9]">dias</span>
+                    </div>
+                  </SettingField>
+                </div>
+
+                <div className="flex flex-col gap-3 rounded-lg border border-[#263041] bg-[#0a0e14] p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h3 className="text-xs font-bold text-[#f8fafc]">Auto-Archivado S3 / Cold Storage</h3>
+                    <p className="mt-1 font-mono text-[10px] text-[#657089]">Mueve logs antiguos a la nube en lugar de eliminarlos permanentemente.</p>
+                  </div>
                   <button
                     type="button"
-                    onClick={handleTestOllamaConnection}
-                    disabled={testingConnection}
-                    className="bg-transparent border border-[#2a3242] hover:bg-[#1c2230] text-[#9ba3b4] hover:text-white px-3 py-1.5 text-xs font-mono font-bold rounded flex items-center justify-center gap-2 transition-all cursor-pointer"
+                    role="switch"
+                    aria-checked={autoArchive}
+                    onClick={() => setAutoArchive((value) => !value)}
+                    className={`relative h-7 w-12 shrink-0 rounded-full border transition-all ${
+                      autoArchive ? 'border-emerald-400/30 bg-emerald-500/25' : 'border-[#334155] bg-[#111720]'
+                    }`}
                   >
-                    {testingConnection ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : null}
-                    <span>Test Conexión</span>
+                    <span
+                      className={`absolute left-1 top-1 h-5 w-5 rounded-full bg-white transition-transform ${
+                        autoArchive ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
                   </button>
                 </div>
-                {ollamaConnected ? (
-                  <span className="flex items-center gap-1.5 text-[10px] font-mono pt-1 text-[#10b981]">
-                    <Check className="h-3.5 w-3.5" />
-                    <span>Ollama accesible y modelo configurado disponible.</span>
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-1.5 text-[10px] font-mono pt-1 text-amber-400">
-                    <Info className="h-3.5 w-3.5" />
-                    <span>Hace clic en "Test Conexion" para verificar Ollama.</span>
-                  </span>
-                )}
-              </div>
+              </>
+            )}
 
-              {/* Nmap binary path */}
-              <div className="space-y-1">
-                <label className="text-[11px] font-mono text-[#9ba3b4] block">RUTA EJECUTABLE NMAP</label>
-                <input
-                  type="text"
-                  value={nmapPath}
-                  onChange={(e) => setNmapPath(e.target.value)}
-                  placeholder="C:\\Program Files (x86)\\Nmap\\nmap.exe  o  /usr/bin/nmap"
-                  className="bg-[#0a0e14] border border-[#2a3242] focus:border-[#3b82f6] text-xs text-[#e4e7eb] rounded p-2 outline-none font-mono w-full"
-                />
-              </div>
+            {activeTab === 'integracion' && (
+              <>
+                <SettingField label="Ollama endpoint URL" hint="Se usa para comprobar disponibilidad del modelo local configurado.">
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <input
+                      type="text"
+                      value={ollamaURL}
+                      onChange={(event) => setOllamaURL(event.target.value)}
+                      className="h-10 min-w-0 flex-1 rounded-md border border-[#263041] bg-[#111720] px-3 font-mono text-xs text-[#e5edf8] outline-none focus:border-blue-400/70"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleTestOllamaConnection}
+                      disabled={testingConnection}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-blue-400/30 bg-blue-500/10 px-3 font-mono text-xs font-bold text-blue-300 transition-all hover:bg-blue-500/15 disabled:opacity-60"
+                    >
+                      {testingConnection && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
+                      Test Conexion
+                    </button>
+                  </div>
+                  <div className={`mt-3 inline-flex items-center gap-1.5 rounded-md border px-2 py-1 font-mono text-[10px] ${
+                    ollamaConnected
+                      ? 'border-emerald-400/25 bg-emerald-500/10 text-emerald-300'
+                      : 'border-amber-400/25 bg-amber-500/10 text-amber-300'
+                  }`}>
+                    {ollamaConnected ? <Check className="h-3 w-3" /> : <Info className="h-3 w-3" />}
+                    {ollamaConnected ? 'Ollama accesible' : 'Pendiente de verificacion'}
+                  </div>
+                </SettingField>
 
-              {/* Suricata config path */}
-              <div className="space-y-1">
-                <label className="text-[11px] font-mono text-[#9ba3b4] block">ARCHIVO CONFIGURACION SURICATA</label>
-                <input
-                  type="text"
-                  value={suricataPath}
-                  onChange={(e) => setSuricataPath(e.target.value)}
-                  placeholder="C:\\Program Files\\Suricata\\suricata.yaml  o  /etc/suricata/suricata.yaml"
-                  className="bg-[#0a0e14] border border-[#2a3242] focus:border-[#3b82f6] text-xs text-[#e4e7eb] rounded p-2 outline-none font-mono w-full"
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Reglas de Deteccion Tab */}
-          {activeTab === 'reglas' && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 border-b border-[#2a3242] pb-2.5 mb-1">
-                <ShieldAlert className="h-4 w-4 text-[#3b82f6]" />
-                <span className="font-sans font-bold text-sm text-[#e4e7eb]">
-                  Reglas Personalizadas (Suricata-like)
-                </span>
-              </div>
-
-              {/* Add Rule Form */}
-              <div className="space-y-2 pb-4 border-b border-[#1c2230]">
-                <label className="text-[11px] font-mono text-[#9ba3b4] block">AÑADIR NUEVA REGLA</label>
-                <div className="flex gap-2">
+                <SettingField label="Ruta ejecutable Nmap">
                   <input
                     type="text"
-                    value={newRuleText}
-                    onChange={(e) => setNewRuleText(e.target.value)}
-                    placeholder="alert tcp any any -> any 80 (msg:&quot;HTTP Traffic&quot;; severity:INFO;)"
-                    className="bg-[#0a0e14] border border-[#2a3242] focus:border-[#3b82f6] text-xs text-[#e4e7eb] rounded p-2 outline-none font-mono flex-1"
+                    value={nmapPath}
+                    onChange={(event) => setNmapPath(event.target.value)}
+                    placeholder="C:\\Program Files (x86)\\Nmap\\nmap.exe  o  /usr/bin/nmap"
+                    className="h-10 w-full rounded-md border border-[#263041] bg-[#111720] px-3 font-mono text-xs text-[#e5edf8] outline-none placeholder:text-[#566176] focus:border-blue-400/70"
                   />
-                  <button
-                    type="button"
-                    onClick={handleAddRule}
-                    className="bg-[#3b82f6] hover:bg-[#3b82f6]/95 text-white py-1.5 px-3 rounded text-xs font-mono font-bold transition-all cursor-pointer flex items-center gap-1.5"
-                  >
-                    <Plus className="h-4 w-4" />
-                    <span>Añadir</span>
-                  </button>
+                </SettingField>
+
+                <SettingField label="Archivo configuracion Suricata">
+                  <input
+                    type="text"
+                    value={suricataPath}
+                    onChange={(event) => setSuricataPath(event.target.value)}
+                    placeholder="C:\\Program Files\\Suricata\\suricata.yaml  o  /etc/suricata/suricata.yaml"
+                    className="h-10 w-full rounded-md border border-[#263041] bg-[#111720] px-3 font-mono text-xs text-[#e5edf8] outline-none placeholder:text-[#566176] focus:border-blue-400/70"
+                  />
+                </SettingField>
+              </>
+            )}
+
+            {activeTab === 'reglas' && (
+              <>
+                <SettingField label="Anadir nueva regla">
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <input
+                      type="text"
+                      value={newRuleText}
+                      onChange={(event) => setNewRuleText(event.target.value)}
+                      placeholder="alert tcp any any -> any 80 (msg:&quot;HTTP Traffic&quot;; severity:INFO;)"
+                      className="h-10 min-w-0 flex-1 rounded-md border border-[#263041] bg-[#111720] px-3 font-mono text-xs text-[#e5edf8] outline-none placeholder:text-[#566176] focus:border-blue-400/70"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddRule}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-blue-500 px-3 font-mono text-xs font-bold text-white transition-all hover:bg-blue-400"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Anadir
+                    </button>
+                  </div>
+                </SettingField>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-[#748099]">Reglas activas</span>
+                    <span className="rounded-md border border-[#263041] px-2 py-1 font-mono text-[10px] text-[#8792a8]">{customRules.length}</span>
+                  </div>
+                  {customRules.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-[#263041] bg-[#0a0e14] p-8 text-center font-mono text-xs text-[#657089]">
+                      No hay reglas personalizadas cargadas.
+                    </div>
+                  ) : (
+                    <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                      {customRules.map((rule) => (
+                        <div key={rule.id} className="flex items-start gap-3 rounded-lg border border-[#263041] bg-[#0a0e14] p-3">
+                          <span className={`mt-1 h-2 w-2 rounded-full ${rule.enabled ? 'bg-emerald-400' : 'bg-[#657089]'}`} />
+                          <code className="min-w-0 flex-1 break-all font-mono text-[11px] leading-relaxed text-[#dbe6f7]">{rule.rule_text}</code>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteRule(rule.id)}
+                            className="rounded-md p-1.5 text-red-300 transition-all hover:bg-red-500/10"
+                            title="Eliminar regla"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            {activeTab === 'logs' && (
+              <div className="rounded-lg border border-[#263041] bg-[#070b10] p-3">
+                <div className="mb-3 flex items-center justify-between border-b border-[#263041] pb-2">
+                  <span className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-[#748099]">systemd_status.log</span>
+                  <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 font-mono text-[10px] text-emerald-300">stream local</span>
+                </div>
+                <div className="h-72 overflow-y-auto font-mono text-[11px] leading-relaxed text-emerald-300 selection:bg-emerald-500/20">
+                  {mockLogs.map((log) => (
+                    <div key={log} className="rounded px-2 py-1 hover:bg-[#111720]">{log}</div>
+                  ))}
                 </div>
               </div>
+            )}
+          </div>
 
-              {/* Rules List */}
-              <div className="space-y-2">
-                <label className="text-[11px] font-mono text-[#9ba3b4] block">REGLAS ACTIVAS ({customRules.length})</label>
-                {customRules.length === 0 ? (
-                  <div className="text-xs text-[#5c6473] font-mono py-4 text-center border border-dashed border-[#2a3242] rounded">
-                    No hay reglas personalizadas cargadas.
-                  </div>
-                ) : (
-                  <div className="space-y-2 max-h-64 overflow-y-auto pr-2">
-                    {customRules.map((r) => (
-                      <div key={r.id} className="bg-[#0a0e14] border border-[#2a3242] p-2.5 rounded flex items-start justify-between gap-4">
-                        <span className="text-[11px] font-mono text-[#e4e7eb] break-all pt-0.5">{r.rule_text}</span>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteRule(r.id)}
-                          className="text-[#ef4444] hover:text-[#ef4444]/80 p-1"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Logs Tab */}
-          {activeTab === 'logs' && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 border-b border-[#2a3242] pb-2.5 mb-1">
-                <Terminal className="h-4 w-4 text-[#3b82f6]" />
-                <span className="font-sans font-bold text-sm text-[#e4e7eb]">
-                  systemd_status.log
-                </span>
-              </div>
-
-              <div className="bg-[#0a0e14] border border-[#2a3242] rounded p-3 font-mono text-[10.5px] leading-relaxed text-[#10b981] h-64 overflow-y-auto whitespace-pre-wrap select-text selection:bg-teal-500/20">
-                {mockLogs.map((log, idx) => (
-                  <div key={idx} className="hover:bg-[#131820] py-0.5 rounded px-1.5">
-                    {log}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Footer Save Changes button */}
           {activeTab !== 'logs' && (
-            <div className="flex justify-end gap-2 border-t border-[#1c2230] pt-4 mt-1 select-none">
-              <span className="text-[#5c6473] font-mono text-[10px] mr-auto mt-2">
-                *Las URLs de Nmap/Suricata/Ollama se editan en config.yaml. Recargá el backend para que apliquen.
+            <footer className="flex flex-col gap-3 border-t border-[#263041] bg-[#0a0e14] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <span className="font-mono text-[10px] text-[#657089]">
+                Las rutas de Nmap, Suricata y Ollama se aplican desde config.yaml al reiniciar el backend.
               </span>
               <button
                 type="button"
                 onClick={handleSaveConfig}
-                className="bg-[#3b82f6] hover:bg-[#3b82f6]/95 text-white py-1.5 px-4 rounded text-xs font-mono font-bold transition-all cursor-pointer shadow-lg shadow-[#3b82f6]/10"
+                className="inline-flex h-9 items-center justify-center rounded-md bg-blue-500 px-4 font-mono text-xs font-bold text-white transition-all hover:bg-blue-400"
               >
-                Guardar Configuración
+                Guardar Configuracion
               </button>
-            </div>
+            </footer>
           )}
-        </div>
-      </div>
+        </section>
+      </main>
 
-      {/* Applied toast popup */}
       {saveToast && (
-        <div className="fixed bottom-6 right-6 z-50 bg-[#10b981] text-white px-4 py-2.5 rounded shadow-xl font-sans text-xs font-semibold flex items-center gap-2">
+        <div className="fixed bottom-6 right-6 z-50 inline-flex items-center gap-2 rounded-lg border border-emerald-400/30 bg-emerald-500 px-4 py-2.5 text-xs font-semibold text-white shadow-xl">
           <Check className="h-3.5 w-3.5" />
-          <span>Configuración guardada. Recargando subprocesos...</span>
+          Configuracion guardada.
         </div>
       )}
 
-      {/* Syntax Help Modal */}
       {showSyntaxHelp && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="bg-[#131820] border border-[#2a3242] rounded-lg p-5 w-[500px] shadow-2xl relative">
-            <h3 className="text-[#e4e7eb] font-sans font-bold text-sm mb-4 flex items-center gap-2">
-              <Info className="h-4 w-4 text-[#3b82f6]" />
-              Sintaxis de Rutas por SO
-            </h3>
-            
-            <div className="space-y-4 text-xs font-mono">
-              <div className="bg-[#0a0e14] border border-[#2a3242] rounded p-3">
-                <h4 className="text-[#3b82f6] font-bold mb-2">Windows</h4>
-                <p className="text-[#9ba3b4] mb-2 leading-relaxed">
-                  Las rutas utilizan barras invertidas (<span className="text-[#e4e7eb]">\\</span>). Se recomienda usar la ruta completa.
-                </p>
-                <div className="text-[#e4e7eb] pl-3 border-l-2 border-[#1c2230] space-y-1">
-                  <span className="block"><span className="text-[#5c6473]">Nmap:</span> <span className="text-[#10b981]">C:\Program Files (x86)\Nmap\nmap.exe</span></span>
-                  <span className="block"><span className="text-[#5c6473]">Suricata:</span> <span className="text-[#10b981]">C:\Program Files\Suricata\suricata.yaml</span></span>
-                </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-xl rounded-lg border border-[#334155] bg-[#111720] shadow-2xl">
+            <div className="flex items-center justify-between border-b border-[#263041] bg-[#0a0e14] p-4">
+              <h3 className="flex items-center gap-2 text-sm font-bold text-[#f8fafc]">
+                <Info className="h-4 w-4 text-blue-300" />
+                Sintaxis de rutas por SO
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowSyntaxHelp(false)}
+                className="rounded-md p-1.5 text-[#8792a8] hover:bg-[#182131] hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="grid gap-3 p-4 text-xs md:grid-cols-2">
+              <div className="rounded-lg border border-[#263041] bg-[#0a0e14] p-3">
+                <h4 className="mb-2 font-mono font-bold text-blue-300">Windows</h4>
+                <code className="block break-all rounded border border-[#263041] bg-[#111720] p-2 font-mono text-[#dbe6f7]">
+                  C:\Program Files (x86)\Nmap\nmap.exe
+                </code>
+                <code className="mt-2 block break-all rounded border border-[#263041] bg-[#111720] p-2 font-mono text-[#dbe6f7]">
+                  C:\Program Files\Suricata\suricata.yaml
+                </code>
               </div>
-
-              <div className="bg-[#0a0e14] border border-[#2a3242] rounded p-3">
-                <h4 className="text-[#3b82f6] font-bold mb-2">Linux / macOS</h4>
-                <p className="text-[#9ba3b4] mb-2 leading-relaxed">
-                  Las rutas utilizan barras normales (<span className="text-[#e4e7eb]">/</span>) hacia los binarios o archivos de configuración.
-                </p>
-                <div className="text-[#e4e7eb] pl-3 border-l-2 border-[#1c2230] space-y-1">
-                  <span className="block"><span className="text-[#5c6473]">Nmap:</span> <span className="text-[#10b981]">/usr/bin/nmap</span></span>
-                  <span className="block"><span className="text-[#5c6473]">Suricata:</span> <span className="text-[#10b981]">/etc/suricata/suricata.yaml</span></span>
-                </div>
+              <div className="rounded-lg border border-[#263041] bg-[#0a0e14] p-3">
+                <h4 className="mb-2 font-mono font-bold text-blue-300">Linux / macOS</h4>
+                <code className="block break-all rounded border border-[#263041] bg-[#111720] p-2 font-mono text-[#dbe6f7]">
+                  /usr/bin/nmap
+                </code>
+                <code className="mt-2 block break-all rounded border border-[#263041] bg-[#111720] p-2 font-mono text-[#dbe6f7]">
+                  /etc/suricata/suricata.yaml
+                </code>
               </div>
             </div>
-
-            <button
-              onClick={() => setShowSyntaxHelp(false)}
-              className="mt-5 w-full bg-[#3b82f6] hover:bg-[#3b82f6]/95 text-white py-2 rounded text-xs font-bold transition-colors shadow-lg shadow-[#3b82f6]/10"
-            >
-              Entendido
-            </button>
+            <div className="border-t border-[#263041] bg-[#0a0e14] p-4">
+              <button
+                type="button"
+                onClick={() => setShowSyntaxHelp(false)}
+                className="h-9 w-full rounded-md bg-blue-500 font-mono text-xs font-bold text-white transition-all hover:bg-blue-400"
+              >
+                Entendido
+              </button>
+            </div>
           </div>
         </div>
       )}

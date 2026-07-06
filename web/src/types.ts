@@ -6,7 +6,8 @@ export type ViewType =
   | 'topologia'
   | 'vulnerabilidades'
   | 'asistente'
-  | 'configuracion';
+  | 'configuracion'
+  | 'reportes';
 
 export interface KPI {
   title: string;

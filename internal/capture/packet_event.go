@@ -74,6 +74,8 @@ func packetToEvent(p gopacket.Packet) PacketEvent {
 		e.SrcPort = uint16(tcpL.SrcPort)
 		e.DstPort = uint16(tcpL.DstPort)
 		e.Protocol = "TCP"
+		e.TCPSyn = tcpL.SYN
+		e.TCPAck = tcpL.ACK
 	}
 	if udp := p.Layer(layers.LayerTypeUDP); udp != nil {
 		udpL := udp.(*layers.UDP)

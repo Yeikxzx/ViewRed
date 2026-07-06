@@ -16,8 +16,8 @@ Feature mapping (7 dims):
   [1] Proto_Idx      — derived from network_protocols_all (0=TCP, 1=UDP, 2=ICMP, 3=OTHER)
   [2] SrcPort        — first port in network_ports_src
   [3] DstPort        — first port in network_ports_dst
-  [4] PacketsPerSec  — network_packets_all_count / 5.0  (5-second window)
-  [5] UniqueDstPorts — network_ports_dst_count
+  [4] PacketsPerSec  — network_packets_src_count / 5.0  (5-second window, per-source)
+  [5] UniqueDstPorts — network_ports_src_count  (per-source unique ports)
   [6] PayloadEntropy — proxy: scaled payload-length-avg (0..8)
 """
 
@@ -30,11 +30,12 @@ from skl2onnx import convert_sklearn
 from skl2onnx.common.data_types import FloatTensorType
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
+import onnx
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-DATASET_DIR = r"D:\viewred-dataset\processed_files"
+DATASET_DIR = r"C:\Users\Yeikxz\Downloads\viewred-dataset\viewred-dataset"
 WINDOW_SECONDS = 5
 NUM_FEATURES = 7
 RANDOM_STATE = 42
@@ -146,17 +147,58 @@ def extract_features(df: pd.DataFrame) -> np.ndarray:
         dst_ports = parse_list_str(row.get("network_ports_dst", "[]"))
         features[i, 3] = first_port(dst_ports)
 
-        # [4] PacketsPerSec
-        pkt_count = float(row.get("network_packets_all_count", 0) or 0)
+        # [4] PacketsPerSec (per-source rate)
+        pkt_count = float(row.get("network_packets_src_count", 0) or 0)
         features[i, 4] = pkt_count / WINDOW_SECONDS
 
-        # [5] UniqueDstPorts
-        features[i, 5] = float(row.get("network_ports_dst_count", 0) or 0)
+        # [5] UniqueDstPorts (per-source unique ports)
+        features[i, 5] = float(row.get("network_ports_src_count", 0) or 0)
 
         # [6] PayloadEntropy (proxy)
         features[i, 6] = estimate_entropy(row)
 
     return features
+
+
+def _shape_spec(shape: list) -> list:
+    """Normalize ONNX shape: integer dims stay ints, dynamic dims become None."""
+    out = []
+    for d in shape:
+        if isinstance(d, int):
+            out.append(d)
+        elif isinstance(d, str) and d.strip() in ("", "None"):
+            out.append(None)
+        else:
+            out.append(d)
+    return out
+
+
+def validate_onnx(path: str, expected_inputs: list, expected_outputs: list) -> None:
+    """Load an ONNX model and assert expected tensor names and shapes."""
+    model = onnx.load(path)
+    onnx.checker.check_model(model)
+
+    graph = model.graph
+    inputs = {i.name: [d.dim_value if d.dim_value else d.dim_param for d in i.type.tensor_type.shape.dim] for i in graph.input}
+    outputs = {o.name: [d.dim_value if d.dim_value else d.dim_param for d in o.type.tensor_type.shape.dim] for o in graph.output}
+
+    print(f"\n  ONNX validation: {path}")
+    print(f"    Inputs:  {inputs}")
+    print(f"    Outputs: {outputs}")
+
+    for name, shape in expected_inputs:
+        assert name in inputs, f"Expected input '{name}' not found in {path}"
+        actual = _shape_spec(inputs[name])
+        expected = _shape_spec(shape)
+        assert actual == expected, f"Input '{name}' shape {actual} != expected {expected} in {path}"
+
+    for name, shape in expected_outputs:
+        assert name in outputs, f"Expected output '{name}' not found in {path}"
+        actual = _shape_spec(outputs[name])
+        expected = _shape_spec(shape)
+        assert actual == expected, f"Output '{name}' shape {actual} != expected {expected} in {path}"
+
+    print("    ONNX contract OK")
 
 
 # ---------------------------------------------------------------------------
@@ -167,8 +209,8 @@ print("ViewRed — ML Training with CIC IIoT Dataset 2025")
 print("=" * 60)
 
 print("\nLoading datasets...")
-attack_path = os.path.join(DATASET_DIR, "attack_data", "attack_samples_5sec.csv")
-benign_path = os.path.join(DATASET_DIR, "benign_data", "benign_samples_5sec.csv")
+attack_path = os.path.join(DATASET_DIR, "processed_files", "attack_data", "attack_samples_5sec.csv")
+benign_path = os.path.join(DATASET_DIR, "processed_files", "benign_data", "benign_samples_5sec.csv")
 
 df_attack = pd.read_csv(attack_path, low_memory=False)
 df_benign = pd.read_csv(benign_path, low_memory=False)
@@ -235,6 +277,11 @@ iso_path = os.path.join(model_dir, "isolation_forest.onnx")
 with open(iso_path, "wb") as f:
     f.write(onnx_iso.SerializeToString())
 print(f"  Saved {iso_path}")
+validate_onnx(
+    iso_path,
+    expected_inputs=[("float_input", ["None", 7])],
+    expected_outputs=[("label", ["None", 1]), ("scores", ["None", 1])],
+)
 
 # ---------------------------------------------------------------------------
 # 4. Train Random Forest (classification — only attack data)
@@ -279,6 +326,11 @@ rf_path = os.path.join(model_dir, "random_forest.onnx")
 with open(rf_path, "wb") as f:
     f.write(onnx_rf.SerializeToString())
 print(f"\n  Saved {rf_path}")
+validate_onnx(
+    rf_path,
+    expected_inputs=[("float_input", ["None", 7])],
+    expected_outputs=[("output_label", ["None"])],
+)
 
 print("\n" + "=" * 60)
 print("Training complete! Both models exported to models/")

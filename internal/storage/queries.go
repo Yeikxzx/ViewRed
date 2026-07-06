@@ -195,6 +195,47 @@ func (s *Storage) QueryTopTalkers(ctx context.Context, since time.Time, limit in
 	return talkers, nil
 }
 
+const qTopPorts = `
+SELECT dst_port, SUM(length)::bigint AS bytes, COUNT(*)::bigint AS packets
+FROM packets
+WHERE time >= $1 AND dst_port > 0
+GROUP BY dst_port
+ORDER BY bytes DESC
+LIMIT $2
+`
+
+func (s *Storage) QueryTopPorts(ctx context.Context, since time.Time, limit int) ([]TopPort, error) {
+	if s.db == nil {
+		return nil, errStorageNotInitialized
+	}
+
+	if limit <= 0 {
+		limit = defaultTopTalkersLimit
+	}
+	if limit > maxTopTalkersLimit {
+		limit = maxTopTalkersLimit
+	}
+
+	rows, err := s.db.QueryContext(ctx, qTopPorts, since, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	ports := make([]TopPort, 0)
+	for rows.Next() {
+		var p TopPort
+		if err := rows.Scan(&p.Port, &p.Bytes, &p.Packets); err != nil {
+			return nil, err
+		}
+		ports = append(ports, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ports, nil
+}
+
 // QueryProtocolDistribution — design constraints (see plan §Task 7
 // and docs/superpowers/designs/2026-06-18-core-api-and-ui-shell.md §3):
 //

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Archive, Trash2, HardDrive, RefreshCw } from 'lucide-react';
-import { toast } from 'sonner';
 import { getPcaps, deletePcap, deleteAllPcaps, PcapFile } from '../lib/api';
+import { notify } from '../lib/notify';
 import { useSSEStore } from '../store/sse-store';
 
 export default function HistorialView() {
@@ -32,54 +32,42 @@ export default function HistorialView() {
   }, []);
 
   const handleDelete = (filename: string) => {
-    toast(`¿Eliminar el archivo ${filename}?`, {
+    notify.confirm(`¿Eliminar el archivo ${filename}?`, {
       description: 'Esta acción no se puede deshacer.',
-      action: {
-        label: 'Eliminar',
-        onClick: async () => {
-          setDeleting(filename);
-          try {
-            await deletePcap(filename);
-            await fetchPcaps();
-            toast.success('Archivo eliminado');
-          } catch (err) {
-            console.error('Failed to delete pcap:', err);
-            toast.error('Error al eliminar el archivo');
-          } finally {
-            setDeleting(null);
-          }
-        },
-      },
-      cancel: {
-        label: 'Cancelar',
-        onClick: () => {},
+      actionLabel: 'Eliminar',
+      onAction: async () => {
+        setDeleting(filename);
+        try {
+          await deletePcap(filename);
+          await fetchPcaps();
+          notify.success('Archivo eliminado');
+        } catch (err) {
+          console.error('Failed to delete pcap:', err);
+          notify.error('Error al eliminar el archivo');
+        } finally {
+          setDeleting(null);
+        }
       },
       duration: 10000,
     });
   };
 
   const handleDeleteAll = () => {
-    toast('¿Eliminar TODOS los archivos de captura?', {
+    notify.confirm('¿Eliminar TODOS los archivos de captura?', {
       description: 'Esta acción no se puede deshacer.',
-      action: {
-        label: 'Eliminar todo',
-        onClick: async () => {
-          setDeleting('ALL');
-          try {
-            await deleteAllPcaps();
-            await fetchPcaps();
-            toast.success('Todos los archivos eliminados');
-          } catch (err) {
-            console.error('Failed to clear pcaps:', err);
-            toast.error('Error al eliminar los archivos');
-          } finally {
-            setDeleting(null);
-          }
-        },
-      },
-      cancel: {
-        label: 'Cancelar',
-        onClick: () => {},
+      actionLabel: 'Eliminar todo',
+      onAction: async () => {
+        setDeleting('ALL');
+        try {
+          await deleteAllPcaps();
+          await fetchPcaps();
+          notify.success('Todos los archivos eliminados');
+        } catch (err) {
+          console.error('Failed to clear pcaps:', err);
+          notify.error('Error al eliminar los archivos');
+        } finally {
+          setDeleting(null);
+        }
       },
       duration: 10000,
     });

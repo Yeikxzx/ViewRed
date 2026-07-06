@@ -13,6 +13,7 @@ import (
 	"github.com/viewred/viewred/internal/capture"
 	"github.com/viewred/viewred/internal/config"
 	"github.com/viewred/viewred/internal/health"
+	"github.com/viewred/viewred/internal/rules"
 	"github.com/viewred/viewred/internal/shutdown"
 	"github.com/viewred/viewred/internal/storage"
 )
@@ -157,7 +158,7 @@ func (w *recorderWriter) Done() <-chan struct{} { return w.doneCh }
 //	cap.Stop -> writer.Run.done -> pw.Close
 //	  -> server.Shutdown -> broker.Shutdown -> store.Close
 func TestNewWireUp_BrokerWiresIntoShutdownOrder(t *testing.T) {
-	w := newWireUp(&config.Config{}, health.New(), &storage.MockQuerier{}, nil, nil, nil)
+	w := newWireUp(&config.Config{}, health.New(), &storage.MockQuerier{}, nil, nil, nil, rules.NewEngine())
 
 	// Start the wireUp so the broker is running (mimics main.go).
 	ctx, cancel := context.WithCancel(context.Background())
@@ -231,7 +232,7 @@ func TestNewWireUp_BrokerWiresIntoShutdownOrder(t *testing.T) {
 // would have no way to satisfy shutdown.Broker and the fix in
 // C3 would be impossible. This test makes that contract loud.
 func TestNewWireUp_ExposesBrokerForWiring(t *testing.T) {
-	w := newWireUp(&config.Config{}, health.New(), &storage.MockQuerier{}, nil, nil, nil)
+	w := newWireUp(&config.Config{}, health.New(), &storage.MockQuerier{}, nil, nil, nil, rules.NewEngine())
 
 	require.NotNil(t, w.Broker, "wireUp must expose its Broker so main.go can wire it into shutdown.Params")
 

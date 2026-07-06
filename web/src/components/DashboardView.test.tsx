@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi, beforeEach } from 'vitest';
-import { render, cleanup } from '@testing-library/react';
+import { render, cleanup, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { useSSEStore } from '../store/sse-store';
 import type { NetworkAlert } from '../types';
@@ -19,6 +19,13 @@ vi.mock('../lib/sse', () => ({
   useSSE: (...args: unknown[]) => mockUseSSE(...args),
 }));
 
+const mockGetRecentAlerts = vi.fn().mockResolvedValue([]);
+vi.mock('../lib/api', () => ({
+  getTopTalkers: vi.fn(() => Promise.resolve({ since: '', top_talkers: [] })),
+  getProtocols: vi.fn(() => Promise.resolve({ since: '', protocols: [] })),
+  getRecentAlerts: (...args: unknown[]) => mockGetRecentAlerts(...args),
+}));
+
 const noopSetView = vi.fn();
 const noopSetSelectedAlert = vi.fn();
 const noopReconnect = vi.fn();
@@ -35,6 +42,8 @@ const renderDashboard = () =>
 
 beforeEach(() => {
   mockUseSSE.mockReset();
+  mockGetRecentAlerts.mockReset();
+  mockGetRecentAlerts.mockResolvedValue([]);
   mockUseSSE.mockReturnValue({
     lastEvent: null,
     connectionStatus: 'connected',
@@ -96,6 +105,26 @@ describe('DashboardView SSE wiring', () => {
     expect(kpi3, 'expected kpi-card-3 to be in the document').not.toBeNull();
     // device_count=42 → "42"
     expect(kpi3!.textContent).toContain('42');
+  });
+
+  it('labels the live traffic chart with packet units', () => {
+    useSSEStore.setState({
+      messages: new Map([
+        [
+          METRICS_URL,
+          {
+            packets_per_sec: 42,
+            bytes_per_sec: 12_000,
+            active_connections: 1,
+            device_count: 1,
+          },
+        ],
+      ]),
+    });
+    renderDashboard();
+
+    expect(document.body.textContent).toContain('Paquetes en Tiempo Real');
+    expect(document.body.textContent).toContain('paquetes/s');
   });
 });
 
@@ -230,6 +259,66 @@ describe('DashboardView empty state', () => {
     const empty = document.getElementById('dashboard-empty-state');
     expect(empty, 'expected dashboard-empty-state').not.toBeNull();
     expect(empty!.textContent).toMatch(/No hay tráfico/i);
+  });
+
+  it('renders HIGH severity alerts with the amber warning indicator', async () => {
+    const highAlert = {
+      id: '42',
+      timestamp: '2026-05-18T10:00:00Z',
+      severity: 'HIGH' as const,
+      title: 'SSH Brute Force',
+      description: 'Repeated login attempts',
+      source: '10.0.0.5',
+      destination: 'Desconocido',
+      confidence: 92,
+      origin: 'IA Detector',
+      timeAgo: 'Hace un momento',
+      acknowledged: false,
+    };
+    mockGetRecentAlerts.mockResolvedValue([highAlert]);
+
+    renderDashboard();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const indicators = document.querySelectorAll('.bg-amber-500');
+    expect(indicators.length).toBeGreaterThan(0);
+    expect(document.querySelector('.bg-cyan-500')).toBeNull();
+  });
+
+  it('normalizes backend HIGH severity to the frontend type for fetched alerts', async () => {
+    // Drive the real getRecentAlerts mapping with a backend-shaped payload
+    // so the test proves backend-to-frontend severity normalization, not
+    // just CSS rendering.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        alerts: [
+          {
+            id: 42,
+            time: '2026-05-18T10:00:00Z',
+            severity: 'HIGH',
+            source: '10.0.0.5',
+            score: 92,
+            title: 'SSH Brute Force',
+            description: 'Repeated login attempts',
+            context: {},
+          },
+        ],
+        limit: 4,
+        offset: 0,
+        total: 1,
+      }),
+    } as unknown as Response);
+
+    const { getRecentAlerts: realGetRecentAlerts } = await vi.importActual<{
+      getRecentAlerts: typeof import('../lib/api').getRecentAlerts;
+    }>('../lib/api');
+    mockGetRecentAlerts.mockImplementation(realGetRecentAlerts);
+
+    renderDashboard();
+    await waitFor(() => expect(document.querySelectorAll('.bg-amber-500').length).toBeGreaterThan(0));
+
+    expect(document.querySelector('.bg-cyan-500')).toBeNull();
   });
 
   it('does not render the KPI cards while the empty state is shown', () => {

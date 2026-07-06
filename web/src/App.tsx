@@ -11,8 +11,9 @@ import VulnerabilidadesView from './components/VulnerabilidadesView';
 import AsistenteView from './components/AsistenteView';
 import ConfiguracionView from './components/ConfiguracionView';
 import HistorialView from './components/HistorialView';
+import ReportesView from './components/ReportesView';
 import NotFoundView from './components/NotFoundView';
-import { Toaster, toast } from 'sonner';
+import { AppToaster, notify } from './lib/notify';
 
 import { ViewType, NetworkAlert, Vulnerability, ChatMessage } from './types';
 import { llm, type Message } from './lib/llm';
@@ -43,7 +44,7 @@ export default function App() {
   const location = useLocation();
   useEffect(() => {
     const path = location.pathname.slice(1) as ViewType;
-    const validViews: string[] = ['dashboard', 'captura', 'historial', 'filtros', 'alertas', 'topologia', 'vulnerabilidades', 'asistente', 'configuracion'];
+    const validViews: string[] = ['dashboard', 'captura', 'historial', 'filtros', 'alertas', 'topologia', 'vulnerabilidades', 'asistente', 'configuracion', 'reportes'];
     if (path && validViews.includes(path)) {
       setView(path);
     }
@@ -84,8 +85,8 @@ export default function App() {
       const newAlert: NetworkAlert = {
         id: String(a.id),
         timestamp: a.time,
-        severity: (a.severity?.toUpperCase() === 'CRITICAL' || a.severity?.toUpperCase() === 'WARNING') 
-          ? (a.severity.toUpperCase() as 'CRITICAL' | 'WARNING') 
+        severity: (['CRITICAL', 'HIGH', 'WARNING'].includes(a.severity?.toUpperCase() ?? ''))
+          ? (a.severity!.toUpperCase() as 'CRITICAL' | 'HIGH' | 'WARNING')
           : 'INFO',
         title: a.title,
         description: a.description || '',
@@ -98,13 +99,14 @@ export default function App() {
       };
       setAlerts((prev) => [newAlert, ...prev]);
 
-      // Trigger toast notification
+      // Trigger toast notification. HIGH is treated as a warning-class alert
+      // so operators notice it without equating it to CRITICAL.
       if (newAlert.severity === 'CRITICAL') {
-        toast.error(newAlert.title, { description: newAlert.source });
-      } else if (newAlert.severity === 'WARNING') {
-        toast.warning(newAlert.title, { description: newAlert.source });
+        notify.error(newAlert.title, { description: newAlert.source });
+      } else if (newAlert.severity === 'WARNING' || newAlert.severity === 'HIGH') {
+        notify.warning(newAlert.title, { description: newAlert.source });
       } else {
-        toast.info(newAlert.title, { description: newAlert.source });
+        notify.info(newAlert.title, { description: newAlert.source });
       }
     } catch (err) {
       console.error('Error parsing alert SSE', err);
@@ -165,24 +167,18 @@ export default function App() {
 
   const handleClearAlerts = () => {
     // Custom in-app confirmation via toast action (no native dialog)
-    toast('¿Eliminar TODAS las alertas?', {
+    notify.confirm('¿Eliminar TODAS las alertas?', {
       description: 'Esta accion no se puede deshacer.',
-      action: {
-        label: 'Eliminar todo',
-        onClick: async () => {
-          try {
-            await clearAlerts();
-            setAlerts([]);
-            toast.success('Todas las alertas eliminadas');
-          } catch (err) {
-            console.error('Failed to clear alerts', err);
-            toast.error('Error al eliminar las alertas');
-          }
-        },
-      },
-      cancel: {
-        label: 'Cancelar',
-        onClick: () => {},
+      actionLabel: 'Eliminar todo',
+      onAction: async () => {
+        try {
+          await clearAlerts();
+          setAlerts([]);
+          notify.success('Todas las alertas eliminadas');
+        } catch (err) {
+          console.error('Failed to clear alerts', err);
+          notify.error('Error al eliminar las alertas');
+        }
       },
       duration: 10000,
     });
@@ -217,10 +213,10 @@ export default function App() {
       setVulnerabilities((prev) =>
         prev.map((v) => (v.id === id ? { ...v, mitigated: true } : v))
       );
-      toast.success('Vulnerabilidad mitigada exitosamente');
+      notify.success('Vulnerabilidad mitigada exitosamente');
     } catch (err) {
       console.error('Failed to mitigate vuln', err);
-      toast.error('Error al mitigar vulnerabilidad');
+      notify.error('Error al mitigar vulnerabilidad');
     }
   };
 
@@ -268,7 +264,7 @@ export default function App() {
 
   return (
     <div id="viewred-app-root" className="flex h-screen bg-[#0a0e14] overflow-hidden select-none">
-        <Toaster theme="dark" richColors position="top-right" />
+        <AppToaster />
         {/* Sidebar Control left */}
         <Sidebar
           collapsed={collapsed}
@@ -352,6 +348,7 @@ export default function App() {
                 }
               />
               <Route path="/configuracion" element={<ConfiguracionView />} />
+              <Route path="/reportes" element={<ReportesView />} />
               <Route path="*" element={<NotFoundView />} />
             </Routes>
           </main>

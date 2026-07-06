@@ -11,8 +11,8 @@ import {
 } from 'lucide-react';
 import {
   ResponsiveContainer,
-  AreaChart,
-  Area,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -37,6 +37,13 @@ const METRICS_URL = '/api/v1/stream/metrics';
 // "the last 60 data points from SSE events" — at the 1 Hz broker tick
 // this is a one-minute history.
 const TRAFFIC_WINDOW = 60;
+const PROTOCOL_COLORS: Record<string, string> = {
+  TCP: '#3b82f6',
+  UDP: '#10b981',
+  ICMP: '#f59e0b',
+  ARP: '#06b6d4',
+  OTHER: '#9ba3b4',
+};
 
 // ---- number formatters -----------------------------------------------------
 //
@@ -73,6 +80,7 @@ export default function DashboardView({
   const navigate = useNavigate();
   const [topTalkers, setTopTalkers] = useState<IPVolume[]>([]);
   const [protocols, setProtocols] = useState<{name: string, value: string, color: string}[]>([]);
+  const [protocolShares, setProtocolShares] = useState<Record<string, number>>({});
   const [recentAlerts, setRecentAlerts] = useState<NetworkAlert[]>([]);
 
   useEffect(() => {
@@ -91,12 +99,20 @@ export default function DashboardView({
           percentage: (t.bytes / maxBytes) * 100
         })));
         
-        const colors: Record<string, string> = { 'TCP': '#3b82f6', 'UDP': '#10b981', 'ICMP': '#f59e0b', 'HTTPS': '#8b5cf6', 'ARP': '#06b6d4' };
-        setProtocols(protoRes.protocols.map(p => ({
+        const protocolRows = protoRes.protocols
+          .filter((p) => p.percentage > 0)
+          .map(p => ({
           name: p.protocol,
           value: p.percentage.toFixed(1),
-          color: colors[p.protocol.toUpperCase()] || '#9ba3b4'
-        })));
+          color: PROTOCOL_COLORS[p.protocol.toUpperCase()] || PROTOCOL_COLORS.OTHER
+        }));
+        setProtocols(protocolRows);
+        setProtocolShares(
+          protoRes.protocols.reduce<Record<string, number>>((acc, p) => {
+            acc[p.protocol.toUpperCase()] = Math.max(0, p.percentage) / 100;
+            return acc;
+          }, {}),
+        );
         
         setRecentAlerts(alertsRes);
       } catch (err) {
@@ -150,7 +166,7 @@ export default function DashboardView({
   // (a new reference per broker tick) so we never call setState during
   // render. The functional `setTrafficData` form makes the dedup check
   // race-free without needing a ref to the previous state.
-  const [trafficData, setTrafficData] = useState<{ time: string; tcp: number; udp: number; other: number }[]>([]);
+  const [trafficData, setTrafficData] = useState<{ time: string; tcp: number; udp: number; icmp: number; arp: number; other: number }[]>([]);
   useEffect(() => {
     if (metrics === undefined) return;
     setTrafficData((prev) => {
@@ -159,20 +175,20 @@ export default function DashboardView({
         minute: '2-digit',
         second: '2-digit',
       });
+      const shareTotal = Object.values(protocolShares).reduce((sum, share) => sum + share, 0);
       const nextItem = {
         time: nextTime,
-        // `tcp` carries bytes/s, `udp` carries packets/s.
-        // Future plans will replace these series with
-        // per-protocol breakdowns.
-        tcp: Math.max(0, metrics.bytes_per_sec),
-        udp: Math.max(0, metrics.packets_per_sec),
-        other: 0,
+        tcp: Math.max(0, metrics.packets_per_sec * (protocolShares.TCP ?? 0)),
+        udp: Math.max(0, metrics.packets_per_sec * (protocolShares.UDP ?? 0)),
+        icmp: Math.max(0, metrics.packets_per_sec * (protocolShares.ICMP ?? 0)),
+        arp: Math.max(0, metrics.packets_per_sec * (protocolShares.ARP ?? 0)),
+        other: Math.max(0, metrics.packets_per_sec * (shareTotal > 0 ? (protocolShares.OTHER ?? 0) : 1)),
       };
       return prev.length >= TRAFFIC_WINDOW
         ? [...prev.slice(1), nextItem]
         : [...prev, nextItem];
     });
-  }, [metrics]);
+  }, [metrics, protocolShares]);
 
   // ---- KPI cards -----------------------------------------------------------
   //
@@ -385,76 +401,132 @@ export default function DashboardView({
         <div className="bg-[#131820] border border-[#2a3242] p-4 rounded-lg flex flex-col justify-between lg:col-span-2 text-left">
           <div className="flex justify-between items-center border-b border-[#2a3242] pb-3 mb-4">
             <h2 className="font-sans font-bold text-sm text-[#e4e7eb] tracking-tight">
-              Tráfico en Tiempo Real (Throughput)
+              Paquetes en Tiempo Real
             </h2>
             <div className="flex gap-2 text-[10px] font-mono">
               <span className="bg-[#1c2230] border border-[#2a3242] rounded px-2 py-0.5 text-[#e4e7eb] cursor-pointer">
                 Últimos 60s
               </span>
               <span className="text-[#5c6473] hover:text-[#9ba3b4] cursor-pointer px-1 py-0.5">
-                (Mbps)
+                tipos de paquetes/s
               </span>
             </div>
           </div>
 
           <div className="h-56 w-full font-mono text-xs">
             <ResponsiveContainer width="100%" height={224} minWidth={0}>
-              <AreaChart
+              <LineChart
                 data={trafficData}
-                margin={{ top: 5, right: 10, left: -20, bottom: 0 }}
+                margin={{ top: 8, right: 8, left: -8, bottom: 0 }}
               >
-                <defs>
-                  <linearGradient id="tcpColor" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.25} />
-                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="udpColor" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.2} />
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
                 <CartesianGrid
                   strokeDasharray="3 3"
-                  stroke="#1c2230"
+                  stroke="#223045"
+                  strokeOpacity={0.45}
                   vertical={false}
                 />
                 <XAxis
                   dataKey="time"
-                  stroke="#5c6473"
+                  stroke="#53647f"
+                  axisLine={false}
                   tickLine={false}
+                  interval="preserveStartEnd"
+                  minTickGap={18}
                   style={{ fontSize: 9 }}
                 />
                 <YAxis
-                  stroke="#5c6473"
+                  yAxisId="packets"
+                  stroke="#53647f"
+                  axisLine={{ stroke: '#6b7a92', strokeWidth: 1 }}
                   tickLine={false}
+                  width={54}
+                  domain={[0, 'auto']}
+                  tickCount={5}
+                  tickFormatter={(value) => formatPacketsRate(Number(value))}
                   style={{ fontSize: 9 }}
                 />
                 <Tooltip
+                  cursor={{ stroke: '#d8dee9', strokeWidth: 1, strokeOpacity: 0.9 }}
                   contentStyle={{
-                    backgroundColor: '#131820',
+                    backgroundColor: '#111823',
                     borderColor: '#3a4356',
+                    borderRadius: 0,
+                    boxShadow: 'none',
                     color: '#e4e7eb',
+                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                    fontSize: 12,
+                    padding: '12px 14px',
+                  }}
+                  labelStyle={{
+                    color: '#d7dee9',
+                    fontWeight: 700,
+                    marginBottom: 8,
+                  }}
+                  itemStyle={{
+                    color: '#3b82f6',
+                    fontWeight: 700,
+                  }}
+                  formatter={(value, name) => {
+                    const numeric = Number(value);
+                    return [formatPacketsRate(numeric), name];
                   }}
                 />
-                <Area
+                <Line
                   type="monotone"
                   dataKey="tcp"
-                  stroke="#3b82f6"
-                  strokeWidth={2}
-                  fillOpacity={1}
-                  fill="url(#tcpColor)"
-                  name="TCP (Mbps)"
+                  yAxisId="packets"
+                  stroke={PROTOCOL_COLORS.TCP}
+                  strokeWidth={2.5}
+                  dot={false}
+                  activeDot={{
+                    r: 5,
+                    fill: '#3b82f6',
+                    stroke: '#f8fafc',
+                    strokeWidth: 2,
+                  }}
+                  name="TCP"
                 />
-                <Area
+                <Line
                   type="monotone"
                   dataKey="udp"
-                  stroke="#10b981"
-                  strokeWidth={1.5}
-                  fillOpacity={1}
-                  fill="url(#udpColor)"
-                  name="UDP (Mbps)"
+                  yAxisId="packets"
+                  stroke={PROTOCOL_COLORS.UDP}
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 4, fill: PROTOCOL_COLORS.UDP, stroke: '#f8fafc', strokeWidth: 2 }}
+                  name="UDP"
                 />
-              </AreaChart>
+                <Line
+                  type="monotone"
+                  dataKey="icmp"
+                  yAxisId="packets"
+                  stroke={PROTOCOL_COLORS.ICMP}
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 4, fill: PROTOCOL_COLORS.ICMP, stroke: '#f8fafc', strokeWidth: 2 }}
+                  name="ICMP"
+                />
+                <Line
+                  type="monotone"
+                  dataKey="arp"
+                  yAxisId="packets"
+                  stroke={PROTOCOL_COLORS.ARP}
+                  strokeWidth={1.8}
+                  dot={false}
+                  activeDot={{ r: 4, fill: PROTOCOL_COLORS.ARP, stroke: '#f8fafc', strokeWidth: 2 }}
+                  name="ARP"
+                />
+                <Line
+                  type="monotone"
+                  dataKey="other"
+                  yAxisId="packets"
+                  stroke={PROTOCOL_COLORS.OTHER}
+                  strokeWidth={1.8}
+                  dot={false}
+                  activeDot={{ r: 4, fill: PROTOCOL_COLORS.OTHER, stroke: '#f8fafc', strokeWidth: 2 }}
+                  name="OTROS"
+                />
+              </LineChart>
             </ResponsiveContainer>
           </div>
         </div>
@@ -486,11 +558,13 @@ export default function DashboardView({
                   fill="transparent"
                 />
                 {(() => {
+                  const circumference = 251.3274;
+                  const gap = protocols.length > 1 ? 2.5 : 0;
                   let cumulative = 0;
                   return protocols.map((p, i) => {
-                    const percent = parseFloat(p.value);
-                    if (percent === 0) return null;
-                    const dashoffset = 251.3274 - (percent / 100) * 251.3274;
+                    const percent = Math.max(0, Math.min(100, parseFloat(p.value)));
+                    if (!Number.isFinite(percent) || percent === 0) return null;
+                    const segment = Math.max(0, (percent / 100) * circumference - gap);
                     const rotate = (cumulative / 100) * 360;
                     cumulative += percent;
                     return (
@@ -502,8 +576,8 @@ export default function DashboardView({
                         stroke={p.color}
                         strokeWidth="8"
                         fill="transparent"
-                        strokeDasharray="251.3274"
-                        strokeDashoffset={dashoffset}
+                        strokeLinecap="round"
+                        strokeDasharray={`${segment} ${circumference - segment}`}
                         transform={`rotate(${rotate} 50 50)`}
                         className="transition-all duration-1000 ease-out"
                       />
@@ -517,14 +591,14 @@ export default function DashboardView({
                   Capa 4
                 </span>
                 <span className="font-sans font-bold text-lg text-[#e4e7eb] block mt-0.5">
-                  L4 Total
+                  {protocols.length > 0 ? '100%' : '0%'}
                 </span>
               </div>
             </div>
 
             {/* Legends */}
-            <div className="grid grid-cols-2 gap-x-6 gap-y-2 mt-4 w-full px-2">
-              {protocols.map((proto, index) => (
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2 mt-4 w-full px-2 min-h-10">
+              {protocols.length > 0 ? protocols.map((proto, index) => (
                 <div key={index} className="flex items-center gap-2 text-xs">
                   <span
                     className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
@@ -537,7 +611,11 @@ export default function DashboardView({
                     {proto.value}%
                   </span>
                 </div>
-              ))}
+              )) : (
+                <div className="col-span-2 text-center font-mono text-xs text-[#5c6473]">
+                  Sin datos
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -630,7 +708,7 @@ export default function DashboardView({
                   className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${
                     alert.severity === 'CRITICAL'
                       ? 'bg-red-500 animate-pulse'
-                      : alert.severity === 'WARNING'
+                      : (alert.severity === 'WARNING' || alert.severity === 'HIGH')
                       ? 'bg-amber-500'
                       : 'bg-cyan-500'
                   }`}

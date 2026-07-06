@@ -27,12 +27,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/viewred/viewred/internal/api/handlers"
 	"github.com/viewred/viewred/internal/capture"
 	"github.com/viewred/viewred/internal/config"
 	"github.com/viewred/viewred/internal/discovery"
 	"github.com/viewred/viewred/internal/geoip"
 	"github.com/viewred/viewred/internal/health"
-	"github.com/viewred/viewred/internal/api/handlers"
 	"github.com/viewred/viewred/internal/ml"
 	"github.com/viewred/viewred/internal/resolver"
 	"github.com/viewred/viewred/internal/rules"
@@ -40,10 +40,18 @@ import (
 	"github.com/viewred/viewred/internal/shutdown"
 	"github.com/viewred/viewred/internal/sse"
 	"github.com/viewred/viewred/internal/storage"
+	"github.com/viewred/viewred/internal/reports"
 )
 
 // Version is the semantic version of this build, set via -ldflags at build time.
 var Version = "0.1.0-dev"
+
+// defaultRules returns the built-in SSH/Telnet detection rules used when no
+// custom rules are configured or when storage is unavailable. The rules are
+// SYN-only to suppress noise from ongoing sessions (ACKs, keepalives, data).
+func defaultRules() []string {
+	return rules.DefaultRuleStrings()
+}
 
 func main() {
 	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
@@ -208,7 +216,7 @@ func main() {
 		writerCtx, writerCancel := context.WithCancel(context.Background())
 		defer writerCancel()
 		go writer.Run(writerCtx, packets)
-		
+
 		discEngine = discovery.NewEngine(writer)
 	}
 
@@ -266,13 +274,22 @@ func main() {
 			}
 		} else {
 			// Fallback defaults if no custom rules exist
-			_ = rulesEngine.AddRule(`alert tcp any any -> any 22 (msg:"SSH Traffic Detected"; severity:INFO;)`)
-			_ = rulesEngine.AddRule(`alert tcp any any -> any 23 (msg:"Insecure Telnet Traffic"; severity:CRITICAL;)`)
+			for _, rule := range defaultRules() {
+				_ = rulesEngine.AddRule(rule)
+			}
 		}
 	} else {
 		// Fallback defaults when storage is unavailable
-		_ = rulesEngine.AddRule(`alert tcp any any -> any 22 (msg:"SSH Traffic Detected"; severity:INFO;)`)
-		_ = rulesEngine.AddRule(`alert tcp any any -> any 23 (msg:"Insecure Telnet Traffic"; severity:CRITICAL;)`)
+		for _, rule := range defaultRules() {
+			_ = rulesEngine.AddRule(rule)
+		}
+	}
+
+	// Start auto-reports scheduler
+	if store != nil {
+		reportsDir := filepath.Join("data", "reports")
+		os.MkdirAll(reportsDir, 0o755)
+		reports.StartScheduler(ctx, store, reportsDir)
 	}
 
 	wire := newWireUp(&cfg, rg, querier, dnsResolver, captureHandle, geoipSvc, rulesEngine)
@@ -281,7 +298,7 @@ func main() {
 	captureHandle.Broker = wire.Broker
 
 	// Start ML and Rules evaluation worker
-		// Initialize ML Engine.
+	// Initialize ML Engine.
 	// Pass the project's onnxruntime.dll explicitly to avoid loading
 	// an older system-wide version from C:\WINDOWS\system32\.
 	mlDLL := "onnxruntime.dll"
@@ -300,6 +317,12 @@ func main() {
 
 	// Flood detector — statistical heuristics independent of ONNX model.
 	floodDetector := ml.NewFloodDetector()
+
+	// Brute-force detector — behavioral SYN counting for SSH/Telnet.
+	bruteForceDetector := ml.NewBruteForceDetector()
+
+	// Scan/recon detector — behavioral unique-destination-port counting for TCP SYN scans.
+	scanReconDetector := ml.NewScanReconDetector()
 
 	// Start evaluation worker pool
 	// We use 4 workers to parallelize ML and Rules evaluation, preventing the bridge from blocking.
@@ -327,6 +350,12 @@ func main() {
 
 					// 0b. Flood Detector — record every packet for rate analysis
 					floodDetector.Record(e)
+
+					// 0c. Brute Force Detector — record SYN attempts to SSH/Telnet
+					bruteForceDetector.Record(e)
+
+					// 0d. Scan/Recon Detector — record TCP SYN packets for port-scan analysis
+					scanReconDetector.Record(e)
 
 					// 1. Rule Engine
 					matches := rulesEngine.Evaluate(e)
@@ -364,6 +393,36 @@ func main() {
 						if writer != nil {
 							_ = writer.WriteAlert(ctx, *floodAlert)
 							if alertJSON, err := json.Marshal(floodAlert); err == nil {
+								wire.Broker.Broadcast(sse.Event{
+									Name:  "alert",
+									Topic: "alerts",
+									Data:  alertJSON,
+								})
+							}
+						}
+					}
+
+					// 2b. Brute Force Detector — evaluate SSH/Telnet thresholds
+					bruteForceAlert := bruteForceDetector.Evaluate(e)
+					if bruteForceAlert != nil {
+						if writer != nil {
+							_ = writer.WriteAlert(ctx, *bruteForceAlert)
+							if alertJSON, err := json.Marshal(bruteForceAlert); err == nil {
+								wire.Broker.Broadcast(sse.Event{
+									Name:  "alert",
+									Topic: "alerts",
+									Data:  alertJSON,
+								})
+							}
+						}
+					}
+
+					// 2c. Scan/Recon Detector — evaluate TCP SYN scan thresholds
+					scanReconAlert := scanReconDetector.Evaluate(e)
+					if scanReconAlert != nil {
+						if writer != nil {
+							_ = writer.WriteAlert(ctx, *scanReconAlert)
+							if alertJSON, err := json.Marshal(scanReconAlert); err == nil {
 								wire.Broker.Broadcast(sse.Event{
 									Name:  "alert",
 									Topic: "alerts",

@@ -147,6 +147,17 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 		v1.GET("/pcaps", handlers.ListPcaps(pcapDir))
 		v1.DELETE("/pcaps/:filename", handlers.DeletePcap(pcapDir))
 		v1.DELETE("/pcaps", handlers.DeleteAllPcaps(pcapDir))
+		
+		reportDeps := handlers.ReportDeps{
+			Querier: deps.Querier,
+			OutputDir: filepath.Join("data", "reports"),
+		}
+		v1.POST("/reports/generate", handlers.GenerateReport(reportDeps))
+		v1.GET("/reports", handlers.ListReports(reportDeps))
+		v1.GET("/reports/download/:filename", handlers.DownloadReport(reportDeps))
+		v1.DELETE("/reports/:filename", handlers.DeleteReport(reportDeps))
+		v1.GET("/reports/config", handlers.GetReportConfig(reportDeps))
+		v1.POST("/reports/config", handlers.SaveReportConfig(reportDeps))
 
 		// GeoIP returns the network's approximate geographic location
 		// so the frontend can render a real-world map with devices as

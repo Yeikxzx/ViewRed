@@ -16,6 +16,7 @@ import {
   Activity,
   Clock,
   Archive,
+  FileText,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -74,6 +75,7 @@ export default function Sidebar({
     },
     { id: 'topologia', path: '/topologia', label: 'Topología', icon: Network, section: 'analysis' },
     { id: 'vulnerabilidades', path: '/vulnerabilidades', label: 'Vulnerabilidades', icon: ShieldAlert, section: 'analysis' },
+    { id: 'reportes', path: '/reportes', label: 'Reportes', icon: FileText, section: 'analysis' },
     { id: 'asistente', path: '/asistente', label: 'Asistente', icon: Sparkles, section: 'system' },
     { id: 'configuracion', path: '/configuracion', label: 'Configuración', icon: Settings, section: 'system' },
   ];
@@ -176,15 +178,12 @@ export default function Sidebar({
         >
           <div className="flex items-center gap-2 min-w-0">
             {/* Brand mark — always visible */}
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0">
-              <img src="/logo.png" alt="ViewRed Logo" className="w-full h-full object-contain" />
-            </div>
             {!collapsed && (
               <div className="flex flex-col min-w-0">
-                <span className="font-bold tracking-wide text-[15px] text-[#e4e7eb] leading-tight">
-                  ViewRed
+                <span className="font-sans text-[18px] font-black tracking-[0.01em] text-[#f8fafc] leading-none">
+                  View<span className="text-red-300">Red</span>
                 </span>
-                <span className="text-[8px] font-mono uppercase tracking-[0.15em] text-[#5c6473] leading-tight">
+                <span className="mt-1 text-[8px] font-mono uppercase tracking-[0.28em] text-[#748099] leading-tight">
                   SecOps Console
                 </span>
               </div>

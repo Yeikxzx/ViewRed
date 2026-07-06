@@ -25,7 +25,7 @@ import {
 import { useSSEStore, type CaptureStatus } from '../store/sse-store';
 import { deriveCapturaViewState } from '../lib/view-state';
 import { getInterfaces, getCaptureConfig, updateCaptureConfig, restartCapture, getPackets, getStoragePolicy, updateStoragePolicy, NetworkInterface } from '../lib/api';
-import { toast } from 'sonner';
+import { notify } from '../lib/notify';
 
 interface CapturaViewProps {
   isCapturing: boolean;
@@ -277,7 +277,7 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
 
   const handleApplyChanges = async () => {
     if (isCapturing) {
-      toast.warning("No se puede aplicar mientras la captura está activa.");
+      notify.warning("No se puede aplicar mientras la captura está activa.");
       return;
     }
     
@@ -292,7 +292,7 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
       if (captureStatus === 'paused') {
         // La captura está pausada — solo guardamos la config. El cambio
         // aplica cuando el usuario reanude manualmente la captura.
-        toast.success("Configuración guardada. Se aplicará al reanudar la captura.");
+        notify.success("Configuración guardada. Se aplicará al reanudar la captura.");
       } else {
         // La captura no está corriendo (estado unknown / nunca arrancó)
         // o el backend no reporta estado — reiniciamos para que el cambio
@@ -302,7 +302,7 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
         setTimeout(() => setShowAppliedToast(false), 3000);
       }
     } catch (err) {
-      toast.error("Error al guardar la configuración");
+      notify.error("Error al guardar la configuración");
     } finally {
       setIsSaving(false);
     }
@@ -315,9 +315,9 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
         max_pcap_size_mb: rotSizeMB,
         max_pcap_age_hours: retentionHours,
       });
-      toast.success("Política de almacenamiento guardada. Los cambios aplicarán al reiniciar la captura.");
+      notify.success("Política de almacenamiento guardada. Los cambios aplicarán al reiniciar la captura.");
     } catch (err) {
-      toast.error("Error al guardar la política de almacenamiento");
+      notify.error("Error al guardar la política de almacenamiento");
     } finally {
       setIsSavingStorage(false);
     }
@@ -349,7 +349,7 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
       : 'bg-red-500';
 
   return (
-    <div id="captura-view-wrapper" className="space-y-6">
+    <div id="captura-view-wrapper" className="space-y-5">
       {/* Health-unreachable banner — shown when the last /api/v1/health
           poll threw. Distinct from the SSE banner on the dashboard
           because the failure source is different (HTTP, not EventSource).
@@ -360,7 +360,7 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
         <div
           id="captura-health-error-banner"
           role="alert"
-          className="flex items-center gap-3 bg-[#3a1d1d] border border-[#ef4444]/40 text-[#fca5a5] px-4 py-2.5 rounded-md text-xs font-mono"
+          className="flex items-center gap-3 rounded-lg border border-red-500/35 bg-red-500/10 px-4 py-3 font-mono text-xs text-red-200"
         >
           <WifiOff className="h-4 w-4 flex-shrink-0" />
           <span className="flex-1">
@@ -370,7 +370,7 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
             id="captura-health-retry-btn"
             type="button"
             onClick={viewState.retry}
-            className="font-mono text-[11px] font-semibold px-2.5 py-1 rounded border border-[#ef4444]/40 hover:bg-[#ef4444]/10 transition-colors"
+            className="rounded-md border border-red-400/35 px-2.5 py-1 font-mono text-[11px] font-semibold transition-colors hover:bg-red-500/10"
           >
             Reintentar
           </button>
@@ -386,7 +386,7 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
         <div
           id="captura-empty-state"
           role="status"
-          className="bg-[#131820] border border-[#2a3242] border-dashed rounded-lg p-8 flex items-center gap-4 select-none"
+          className="flex items-center gap-4 rounded-lg border border-dashed border-[#263041] bg-[#111720] p-8 select-none"
         >
           <Inbox className="h-8 w-8 text-[#5c6473] flex-shrink-0" />
           <div>
@@ -401,8 +401,8 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
       )}
 
       {/* Top Capture Control Status Card */}
-      <div className="bg-[#131820] border border-[#2a3242] p-5 rounded-lg text-left">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#2a3242] pb-4 mb-4">
+      <div className="overflow-hidden rounded-lg border border-[#263041] bg-[#111720] text-left">
+        <div className="flex flex-col gap-4 border-b border-[#263041] bg-[#0a0e14] p-5 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <span
               id="captura-status-dot"
@@ -426,7 +426,7 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
             <button
               id="pause-resume-btn"
               onClick={toggleCapture}
-              className={`flex items-center gap-2 px-3 .5 py-1.5 rounded text-xs font-mono border transition-all ${
+              className={`flex items-center gap-2 rounded-md border px-3.5 py-1.5 font-mono text-xs transition-all ${
                 isCapturing
                   ? 'bg-transparent border-[#2a3242] text-[#9ba3b4] hover:bg-[#1c2230]'
                   : 'bg-[#10b981] text-white border-[#10b981] hover:bg-[#10b981]/90'
@@ -447,7 +447,7 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
             <button
               id="stop-capture-btn"
               onClick={handleClearBuffer}
-              className="flex items-center gap-2 px-3.5 py-1.5 rounded text-xs font-mono border border-red-500/30 bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-all"
+              className="flex items-center gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-3.5 py-1.5 font-mono text-xs text-red-300 transition-all hover:bg-red-500/20"
             >
               <StopCircle className="h-3.5 w-3.5" />
               <span>Detener</span>
@@ -460,8 +460,8 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
             the live capture status via the badge above and leave the
             counter cards as placeholders that reflect the most recent
             derived status. */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-2">
-          <div className="bg-[#0a0e14] border border-[#2a3242]/40 p-4 rounded text-left">
+        <div className="grid grid-cols-2 gap-3 p-5 lg:grid-cols-4">
+          <div className="rounded-lg border border-[#263041] bg-[#0a0e14] p-4 text-left">
             <span className="text-[10px] font-mono text-[#5c6473] font-bold block uppercase tracking-wider">
               Estado del Worker
             </span>
@@ -485,7 +485,7 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
               Reportado por /api/v1/health
             </span>
           </div>
-          <div className="bg-[#0a0e14] border border-[#2a3242]/40 p-4 rounded text-left">
+          <div className="rounded-lg border border-[#263041] bg-[#0a0e14] p-4 text-left">
             <span className="text-[10px] font-mono text-[#5c6473] font-bold block uppercase tracking-wider">
               Paquetes Procesados
             </span>
@@ -496,7 +496,7 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
               {totalPackets !== null ? 'Últimas 24h' : 'Esperando métricas...'}
             </span>
           </div>
-          <div className="bg-[#0a0e14] border border-[#2a3242]/40 p-4 rounded text-left">
+          <div className="rounded-lg border border-[#263041] bg-[#0a0e14] p-4 text-left">
             <span className="text-[10px] font-mono text-[#5c6473] font-bold block uppercase tracking-wider">
               Tráfico Total
             </span>
@@ -507,7 +507,7 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
               {totalBytes !== null ? 'Últimas 24h' : 'Esperando métricas...'}
             </span>
           </div>
-          <div className="bg-[#0a0e14] border border-[#2a3242]/40 p-4 rounded text-left">
+          <div className="rounded-lg border border-[#263041] bg-[#0a0e14] p-4 text-left">
             <span className="text-[10px] font-mono text-[#5c6473] font-bold block uppercase tracking-wider">
               Sesiones Activas
             </span>
@@ -523,39 +523,38 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
         </div>
       </div>
 
-      {/* Split configurations and statistics */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left column: Storage progression area chart */}
-        <div className="bg-[#131820] border border-[#2a3242] p-4 rounded-lg flex flex-col justify-between lg:col-span-2 text-left">
-          <div className="flex justify-between items-center border-b border-[#2a3242] pb-3 mb-4">
+      <div className="space-y-4">
+        {/* Storage progression area chart */}
+        <div className="flex h-fit flex-col overflow-hidden rounded-lg border border-[#263041] bg-[#111720] text-left">
+          <div className="flex items-center justify-between border-b border-[#263041] bg-[#0a0e14] px-4 py-3">
             <h2 className="font-sans font-bold text-sm text-[#e4e7eb] tracking-tight">
               Uso de Almacenamiento PCAPs (Últimas 24h)
             </h2>
             <HardDrive className="h-4 w-4 text-[#5c6473]" />
           </div>
 
-          <div className="h-52 w-full font-mono text-xs">
+          <div className="h-52 w-full px-4 py-4 font-mono text-xs">
             {storageData.every((d) => d.used === 0) ? (
               <div className="h-full flex items-center justify-center text-[#5c6473]">
                 <span className="text-[10px]">Sin datos de uso de almacenamiento en las últimas 24h</span>
               </div>
             ) : (
-            <ResponsiveContainer width="100%" height={180} minWidth={0}>
-              <AreaChart data={storageData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+            <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+              <AreaChart data={storageData} margin={{ top: 4, right: 10, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="storageColor" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2} />
                     <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1c2230" vertical={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#263041" vertical={false} />
                 <XAxis dataKey="time" stroke="#5c6473" tickLine={false} style={{ fontSize: 9 }} />
                 <YAxis stroke="#5c6473" tickLine={false} style={{ fontSize: 9 }} />
                 <Tooltip
                   contentStyle={{
-                    backgroundColor: '#131820',
-                    borderColor: '#3a4356',
-                    color: '#e4e7eb',
+                    backgroundColor: '#111720',
+                    borderColor: '#334155',
+                    color: '#e5edf8',
                   }}
                 />
                 <Area
@@ -572,17 +571,17 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
             )}
           </div>
 
-          <div className="flex justify-between items-center border-t border-[#1c2230] pt-3 text-[10px] font-mono text-[#5c6473]">
+          <div className="flex items-center justify-between border-t border-[#263041] bg-[#0a0e14] px-4 py-2 font-mono text-[10px] text-[#657089]">
             <span>ESPACIO CONSUMIDO POR PCAPs</span>
             <span>CAPACIDAD MÁXIMA ASIGNADA: 500 GB</span>
           </div>
         </div>
 
-        {/* Right column: Config settings side card */}
-        <div className="space-y-4 text-left">
+        {/* Configuration cards */}
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           {/* Form Capture Config */}
-          <div className="bg-[#131820] border border-[#2a3242] p-4 rounded-lg space-y-4">
-            <div className="flex items-center gap-2 border-b border-[#2a3242] pb-2.5">
+          <div className="space-y-3 rounded-lg border border-[#263041] bg-[#111720] p-4">
+            <div className="flex items-center gap-2 border-b border-[#263041] pb-2">
               <Sliders className="h-4 w-4 text-[#3b82f6]" />
               <h2 className="font-sans font-bold text-sm text-[#e4e7eb] tracking-tight">
                 Configuración de Captura
@@ -598,7 +597,7 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
                 value={selectedInterface}
                 onChange={(e) => setSelectedInterface(e.target.value)}
                 disabled={isCapturing}
-                className="w-full bg-[#0a0e14] border border-[#2a3242] rounded px-3 py-1.5 text-xs text-[#e4e7eb] outline-none font-mono py-1.5 disabled:opacity-60 cursor-pointer"
+                className="h-9 w-full cursor-pointer rounded-md border border-[#263041] bg-[#0a0e14] px-3 font-mono text-xs text-[#e4e7eb] outline-none disabled:opacity-60"
               >
                 {interfaces.map((iface) => (
                   <option key={iface.name} value={iface.name}>
@@ -623,7 +622,7 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
                 value={bpfFilter}
                 onChange={(e) => setBpfFilter(e.target.value)}
                 placeholder="Ex. tcp port 80 or udp"
-                className="w-full bg-[#0a0e14] border border-[#2a3242] focus:border-[#3b82f6] rounded px-3 py-1.5 text-xs text-[#e4e7eb] outline-none font-mono"
+                className="h-9 w-full rounded-md border border-[#263041] bg-[#0a0e14] px-3 font-mono text-xs text-[#e4e7eb] outline-none focus:border-blue-400/70"
               />
             </div>
 
@@ -636,7 +635,7 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
                 type="number"
                 value={snaplen}
                 onChange={(e) => setSnaplen(Number(e.target.value))}
-                className="w-full bg-[#0a0e14] border border-[#2a3242] focus:border-[#3b82f6] rounded px-3 py-1.5 text-xs text-[#e4e7eb] outline-none font-mono"
+                className="h-9 w-full rounded-md border border-[#263041] bg-[#0a0e14] px-3 font-mono text-xs text-[#e4e7eb] outline-none focus:border-blue-400/70"
               />
               <span className="text-[9px] text-[#5c6473] font-mono block">
                 Tamaño máximo de paquete a capturar.
@@ -647,15 +646,15 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
             <button
               onClick={handleApplyChanges}
               disabled={isSaving || isCapturing}
-              className="w-full bg-[#3b82f6] hover:bg-[#3b82f6]/95 disabled:opacity-50 text-white py-1.5 rounded text-xs font-mono font-bold flex items-center justify-center gap-2 transition-all cursor-pointer"
+              className="flex h-8 w-full cursor-pointer items-center justify-center gap-2 rounded-md bg-blue-500 font-mono text-xs font-bold text-white transition-all hover:bg-blue-400 disabled:opacity-50"
             >
               <span>{isSaving ? "Guardando..." : "Aplicar Cambios"}</span>
             </button>
           </div>
 
           {/* Form Storage policy */}
-          <div className="bg-[#131820] border border-[#2a3242] p-4 rounded-lg space-y-4">
-            <div className="flex items-center gap-2 border-b border-[#2a3242] pb-2.5">
+          <div className="space-y-3 rounded-lg border border-[#263041] bg-[#111720] p-4">
+            <div className="flex items-center gap-2 border-b border-[#263041] pb-2">
               <Database className="h-4 w-4 text-[#3b82f6]" />
               <h2 className="font-sans font-bold text-sm text-[#e4e7eb] tracking-tight">
                 Políticas de Almacenamiento
@@ -722,7 +721,7 @@ export default function CapturaView({ isCapturing, toggleCapture }: CapturaViewP
             <button
               onClick={handleSaveStoragePolicy}
               disabled={isSavingStorage}
-              className="w-full bg-[#1c2230] hover:bg-[#2a3242] border border-[#3b82f6]/30 text-[#3b82f6] disabled:opacity-50 py-1.5 rounded text-xs font-mono font-bold flex items-center justify-center gap-2 transition-all cursor-pointer"
+              className="flex h-8 w-full cursor-pointer items-center justify-center gap-2 rounded-md border border-blue-400/30 bg-blue-500/10 font-mono text-xs font-bold text-blue-300 transition-all hover:bg-blue-500/15 disabled:opacity-50"
             >
               <span>{isSavingStorage ? "Guardando..." : "Guardar Política de Almacenamiento"}</span>
             </button>

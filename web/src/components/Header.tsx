@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Sparkles, SlidersHorizontal, Settings, HelpCircle, Terminal } from 'lucide-react';
+import { Radio, Search, Sparkles, SlidersHorizontal, Settings, Terminal } from 'lucide-react';
 import { ViewType } from '../types';
 
 interface HeaderProps {
@@ -113,19 +113,34 @@ export default function Header({
           {/* Connection / Capture status badge */}
           <button
             onClick={toggleCapture}
-            className={`group flex items-center gap-2.5 px-3.5 py-1.5 rounded-md border text-xs font-sans font-semibold tracking-wider transition-all shadow-sm ${
+            className={`group relative flex h-9 items-center gap-2 overflow-hidden rounded-lg border px-3 font-mono text-xs font-bold tracking-wide transition-all ${
               isCapturing
-                ? 'bg-[#0a0e14] border-[#10b981]/30 text-[#10b981] hover:border-[#10b981]/50 hover:bg-[#10b981]/10 hover:shadow-[0_0_10px_rgba(16,185,129,0.2)]'
-                : 'bg-[#0a0e14] border-red-500/30 text-red-500 hover:border-red-500/50 hover:bg-red-500/10 hover:shadow-[0_0_10px_rgba(239,68,68,0.2)]'
+                ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-300 shadow-[0_0_22px_rgba(16,185,129,0.08)] hover:border-emerald-300/45 hover:bg-emerald-500/15'
+                : 'border-red-400/30 bg-red-500/10 text-red-300 shadow-[0_0_22px_rgba(239,68,68,0.08)] hover:border-red-300/45 hover:bg-red-500/15'
             }`}
+            title={isCapturing ? 'Pausar captura' : 'Reanudar captura'}
           >
-            <div className="relative flex h-2 w-2 items-center justify-center">
+            <span
+              className={`absolute inset-x-0 bottom-0 h-px ${
+                isCapturing ? 'bg-emerald-300/70' : 'bg-red-300/70'
+              }`}
+            />
+            <span
+              className={`flex h-6 w-6 items-center justify-center rounded-md border ${
+                isCapturing
+                  ? 'border-emerald-400/25 bg-emerald-500/10 text-emerald-300'
+                  : 'border-red-400/25 bg-red-500/10 text-red-300'
+              }`}
+            >
+              <Radio className="h-3.5 w-3.5" />
+            </span>
+            <span className="relative flex h-2.5 w-2.5 items-center justify-center">
               {isCapturing && (
-                <span className="absolute inline-flex h-3.5 w-3.5 animate-ping rounded-full bg-[#10b981] opacity-60"></span>
+                <span className="absolute inline-flex h-4 w-4 animate-ping rounded-full bg-emerald-400 opacity-45" />
               )}
-              <span className={`relative inline-flex h-1.5 w-1.5 rounded-full ${isCapturing ? 'bg-[#10b981]' : 'bg-red-500'}`}></span>
-            </div>
-            <span>{isCapturing ? 'Capturando' : 'Pausado'}</span>
+              <span className={`relative inline-flex h-2 w-2 rounded-full ${isCapturing ? 'bg-emerald-300' : 'bg-red-300'}`} />
+            </span>
+            <span>{isCapturing ? 'LIVE CAPTURE' : 'CAPTURE OFF'}</span>
           </button>
 
           {/* Sparkles AI button */}

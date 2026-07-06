@@ -7,15 +7,24 @@ import (
 
 const (
 	// defaultWindowDuration is how far back we track per-IP stats.
-	defaultWindowDuration = 60 * time.Second
+	defaultWindowDuration = 5 * time.Second
 
 	// defaultCleanupInterval is how often stale IP entries are purged.
-	defaultCleanupInterval = 5 * time.Minute
+	defaultCleanupInterval = 30 * time.Second
 )
+
+// packetSample keeps the metadata needed to maintain correct aggregate
+// state when the sliding window is partially trimmed.
+type packetSample struct {
+	ts       time.Time
+	dstIP    string
+	dstPort  uint16
+	length   int
+}
 
 // ipWindow holds rolling counters for a single source IP over a time window.
 type ipWindow struct {
-	packets    []time.Time
+	packets    []packetSample
 	dstPorts   map[uint16]struct{}
 	dstIPs     map[string]struct{}
 	totalBytes int64
@@ -65,7 +74,12 @@ func (ws *WindowStats) Close() {
 func (ws *WindowStats) evictStale() {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
-	cutoff := time.Now().Add(-ws.window)
+	ws.trimAllLocked(time.Now().Add(-ws.window))
+}
+
+// trimAllLocked drops samples older than cutoff from every IP window and
+// removes IPs that no longer have any packets. Caller must hold ws.mu.
+func (ws *WindowStats) trimAllLocked(cutoff time.Time) {
 	for ip, w := range ws.byIP {
 		w.trim(cutoff)
 		if len(w.packets) == 0 {
@@ -74,11 +88,12 @@ func (ws *WindowStats) evictStale() {
 	}
 }
 
-// trim drops timestamps older than cutoff and returns how many were kept.
+// trim drops samples older than cutoff and rebuilds aggregate state from the
+// remaining samples so expired packets do not contribute to port/IP/byte counts.
 func (w *ipWindow) trim(cutoff time.Time) int {
-	first := 0
-	for i, ts := range w.packets {
-		if ts.After(cutoff) {
+	first := len(w.packets)
+	for i, s := range w.packets {
+		if !s.ts.Before(cutoff) {
 			first = i
 			break
 		}
@@ -93,8 +108,22 @@ func (w *ipWindow) trim(cutoff time.Time) int {
 	}
 	if first > 0 {
 		w.packets = w.packets[first:]
+		w.rebuildAggregates()
 	}
 	return len(w.packets)
+}
+
+// rebuildAggregates recomputes dstPorts, dstIPs and totalBytes from the
+// current packet slice. It is called after partial trimming.
+func (w *ipWindow) rebuildAggregates() {
+	w.dstPorts = make(map[uint16]struct{})
+	w.dstIPs = make(map[string]struct{})
+	w.totalBytes = 0
+	for _, s := range w.packets {
+		w.dstPorts[s.dstPort] = struct{}{}
+		w.dstIPs[s.dstIP] = struct{}{}
+		w.totalBytes += int64(s.length)
+	}
 }
 
 // Record adds a packet event to the window for its source IP.
@@ -111,7 +140,8 @@ func (ws *WindowStats) Record(ip string, dstIP string, dstPort uint16, length in
 		ws.byIP[ip] = w
 	}
 
-	w.packets = append(w.packets, ts)
+	s := packetSample{ts: ts, dstIP: dstIP, dstPort: dstPort, length: length}
+	w.packets = append(w.packets, s)
 	w.dstPorts[dstPort] = struct{}{}
 	w.dstIPs[dstIP] = struct{}{}
 	w.totalBytes += int64(length)
@@ -127,6 +157,8 @@ func (ws *WindowStats) PacketsPerSec(ip string) float64 {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
 
+	ws.trimAllLocked(time.Now().Add(-ws.window))
+
 	w, ok := ws.byIP[ip]
 	if !ok || len(w.packets) == 0 {
 		return 0
@@ -139,7 +171,7 @@ func (ws *WindowStats) PacketsPerSec(ip string) float64 {
 		}
 		return 1.0
 	}
-	elapsed := w.packets[n-1].Sub(w.packets[0]).Seconds()
+	elapsed := w.packets[n-1].ts.Sub(w.packets[0].ts).Seconds()
 	if elapsed <= 0 {
 		return float64(n)
 	}
@@ -151,6 +183,8 @@ func (ws *WindowStats) PacketsPerSec(ip string) float64 {
 func (ws *WindowStats) UniqueDstPorts(ip string) int {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
+
+	ws.trimAllLocked(time.Now().Add(-ws.window))
 
 	w, ok := ws.byIP[ip]
 	if !ok {
@@ -165,6 +199,8 @@ func (ws *WindowStats) UniqueDstIPs(ip string) int {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
 
+	ws.trimAllLocked(time.Now().Add(-ws.window))
+
 	w, ok := ws.byIP[ip]
 	if !ok {
 		return 0
@@ -177,13 +213,15 @@ func (ws *WindowStats) BytesPerSec(ip string) float64 {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
 
+	ws.trimAllLocked(time.Now().Add(-ws.window))
+
 	w, ok := ws.byIP[ip]
 	if !ok || len(w.packets) == 0 {
 		return 0
 	}
 
 	n := len(w.packets)
-	elapsed := w.packets[n-1].Sub(w.packets[0]).Seconds()
+	elapsed := w.packets[n-1].ts.Sub(w.packets[0].ts).Seconds()
 	if elapsed <= 0 {
 		return float64(w.totalBytes)
 	}

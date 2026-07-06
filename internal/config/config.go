@@ -12,20 +12,20 @@ import (
 // Config is the top-level configuration.
 type Config struct {
 	SourcePath string         `yaml:"-"` // Not serialized
-	Server   ServerConfig   `yaml:"server"`
-	Capture  CaptureConfig  `yaml:"capture"`
-	AI       AIConfig       `yaml:"ai"`
-	Scanner  ScannerConfig  `yaml:"scanner"`
-	Database DatabaseConfig `yaml:"database"`
+	Server     ServerConfig   `yaml:"server"`
+	Capture    CaptureConfig  `yaml:"capture"`
+	AI         AIConfig       `yaml:"ai"`
+	Scanner    ScannerConfig  `yaml:"scanner"`
+	Database   DatabaseConfig `yaml:"database"`
 }
 
 type CaptureConfig struct {
-	Interface      string `yaml:"interface"           json:"interface"`
-	BPF            string `yaml:"bpf"                 json:"bpf"`
-	Snaplen        int    `yaml:"snaplen"             json:"snaplen"`
-	MaxPcapSizeMB  int    `yaml:"max_pcap_size_mb"    json:"max_pcap_size_mb"`
-	MaxPcapAgeHours int   `yaml:"max_pcap_age_hours"  json:"max_pcap_age_hours"`
-	PcapDir        string `yaml:"pcap_dir"            json:"pcap_dir"`
+	Interface       string `yaml:"interface"           json:"interface"`
+	BPF             string `yaml:"bpf"                 json:"bpf"`
+	Snaplen         int    `yaml:"snaplen"             json:"snaplen"`
+	MaxPcapSizeMB   int    `yaml:"max_pcap_size_mb"    json:"max_pcap_size_mb"`
+	MaxPcapAgeHours int    `yaml:"max_pcap_age_hours"  json:"max_pcap_age_hours"`
+	PcapDir         string `yaml:"pcap_dir"            json:"pcap_dir"`
 }
 
 type ServerConfig struct {
@@ -68,12 +68,12 @@ func defaults() Config {
 			CORSOrigins: []string{"http://localhost:5173", "http://127.0.0.1:5173", "http://127.0.0.1:3000"},
 		},
 		Capture: CaptureConfig{
-			Interface:      "",
-			BPF:            "tcp port 80 or tcp port 443",
-			Snaplen:        65535,
-			MaxPcapSizeMB:  500,
+			Interface:       "",
+			BPF:             "",
+			Snaplen:         65535,
+			MaxPcapSizeMB:   500,
 			MaxPcapAgeHours: 168,
-			PcapDir:        filepath.Join("data", "pcaps"),
+			PcapDir:         filepath.Join("data", "pcaps"),
 		},
 		AI: AIConfig{
 			OllamaURL:          "http://localhost:11434",
@@ -120,7 +120,7 @@ func (c *Config) Save() error {
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
-	
+
 	// Create directory if it doesn't exist
 	if err := os.MkdirAll(filepath.Dir(c.SourcePath), 0755); err != nil {
 		return fmt.Errorf("create config dir: %w", err)

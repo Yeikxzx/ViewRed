@@ -11,6 +11,7 @@ import (
 
 	"github.com/viewred/viewred/internal/config"
 	"github.com/viewred/viewred/internal/health"
+	"github.com/viewred/viewred/internal/rules"
 	"github.com/viewred/viewred/internal/storage"
 )
 
@@ -43,7 +44,7 @@ func TestNewWireUp_WiresCORSFromConfig(t *testing.T) {
 	cfg = &loaded
 	require.NotEmpty(t, cfg.Server.CORSOrigins, "test precondition: config must have a default CORSOrigins")
 
-	w := newWireUp(cfg, health.New(), &storage.MockQuerier{}, nil, nil, nil)
+	w := newWireUp(cfg, health.New(), &storage.MockQuerier{}, nil, nil, nil, rules.NewEngine())
 
 	server := httptest.NewServer(w.Router)
 	defer server.Close()
@@ -92,7 +93,7 @@ func TestNewWireUp_PassesCORSConfigOverrides(t *testing.T) {
 		},
 	}
 
-	w := newWireUp(cfg, health.New(), &storage.MockQuerier{}, nil, nil, nil)
+	w := newWireUp(cfg, health.New(), &storage.MockQuerier{}, nil, nil, nil, rules.NewEngine())
 
 	server := httptest.NewServer(w.Router)
 	defer server.Close()

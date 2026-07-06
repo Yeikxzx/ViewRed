@@ -125,8 +125,8 @@ export async function getRecentAlerts(limit = 4): Promise<NetworkAlert[]> {
   return data.alerts.map((a): NetworkAlert => ({
     id: String(a.id),
     timestamp: a.time,
-    severity: (a.severity.toUpperCase() === 'CRITICAL' || a.severity.toUpperCase() === 'WARNING') 
-      ? (a.severity.toUpperCase() as 'CRITICAL' | 'WARNING') 
+    severity: (['CRITICAL', 'HIGH', 'WARNING'].includes(a.severity.toUpperCase()))
+      ? (a.severity.toUpperCase() as 'CRITICAL' | 'HIGH' | 'WARNING')
       : 'INFO',
     title: a.title,
     description: a.description || '',

@@ -100,20 +100,34 @@ func Parse(line string) (*Rule, error) {
 
 // Engine evaluates packets against a set of rules.
 type Engine struct {
-	rules   []*Rule
-	rulesMu sync.RWMutex
-	dedupMu sync.Mutex
-	dedup   map[string]time.Time // fingerprint -> when it was last alerted
+	rules    []*Rule
+	rulesMu  sync.RWMutex
+	dedupMu  sync.Mutex
+	dedup    map[string]time.Time // fingerprint -> when it was last alerted
 	dedupTTL time.Duration
 }
 
-// NewEngine creates a new rules engine with a 5-minute dedup interval.
+const defaultDedupTTL = 60 * time.Second
+
+// NewEngine creates a new rules engine with a short dedup interval.
 func NewEngine() *Engine {
 	return &Engine{
 		rules:    make([]*Rule, 0),
 		dedup:    make(map[string]time.Time),
-		dedupTTL: 5 * time.Minute,
+		dedupTTL: defaultDedupTTL,
 	}
+}
+
+// SetDedupTTL updates the duplicate-alert suppression window. Non-positive
+// values fall back to the default so callers cannot accidentally disable
+// recurring incident visibility forever.
+func (e *Engine) SetDedupTTL(ttl time.Duration) {
+	if ttl <= 0 {
+		ttl = defaultDedupTTL
+	}
+	e.dedupMu.Lock()
+	e.dedupTTL = ttl
+	e.dedupMu.Unlock()
 }
 
 // AddRule parses and adds a rule to the engine.
@@ -148,7 +162,7 @@ func (e *Engine) RemoveRule(sid string) bool {
 }
 
 // Evaluate checks a packet against all loaded rules and returns matching
-// rules that haven't fired in the last dedupTTL (5 min) for the same
+// rules that haven't fired in the last dedupTTL for the same
 // (rule + src + dst + dst_port) tuple.
 func (e *Engine) Evaluate(pkt capture.PacketEvent) []*Rule {
 	var matches []*Rule
@@ -195,8 +209,16 @@ func (e *Engine) Evaluate(pkt capture.PacketEvent) []*Rule {
 func match(r *Rule, pkt capture.PacketEvent) bool {
 	// Graceful skip for advanced options we don't fully support in V1
 	// to avoid false positives on generic rules that require them.
-	if _, ok := r.Options["flags"]; ok {
-		return false
+	if flagsVal, ok := r.Options["flags"]; ok {
+		// V1 supports only SYN-only matching (flags:S). Any other flag
+		// value is unsupported and must NOT match.
+		if flagsVal == "S" {
+			if !pkt.TCPSyn || pkt.TCPAck {
+				return false
+			}
+		} else {
+			return false
+		}
 	}
 	if _, ok := r.Options["threshold"]; ok {
 		return false

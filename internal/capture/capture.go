@@ -20,6 +20,8 @@ type PacketEvent struct {
 	SrcPort        uint16
 	DstPort        uint16
 	Protocol       string // "TCP", "UDP", "ICMP", "OTHER"
+	TCPSyn         bool   // true only when decoded TCP layer has SYN set
+	TCPAck         bool   // true only when decoded TCP layer has ACK set
 	Length         int
 	PayloadPreview []byte // truncated to N bytes (configurable)
 	Hostname       string // populated by DHCP or mDNS

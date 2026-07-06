@@ -48,6 +48,7 @@ web/node_modules/
 # Tooling local state
 .atl/
 .worktrees/
+.pnpm-store/
 
 # SDD review packages (large, regenerated each task) — moved to docs/decisions/
 

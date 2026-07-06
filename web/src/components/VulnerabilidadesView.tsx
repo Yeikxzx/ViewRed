@@ -15,7 +15,7 @@ import {
 import { Vulnerability, ScanHistory, ViewType } from '../types';
 import { initialVulnerabilities } from '../data/mockData';
 import { triggerScan, getScanHistory } from '../lib/api';
-import { toast } from 'sonner';
+import { notify } from '../lib/notify';
 
 interface VulnerabilidadesViewProps {
   vulnerabilities: Vulnerability[];
@@ -82,7 +82,7 @@ export default function VulnerabilidadesView({
     if (scanInProgress) return;
 
     if (!targetQuery) {
-      toast.error('Debe ingresar un objetivo a escanear');
+      notify.error('Debe ingresar un objetivo a escanear');
       return;
     }
 
@@ -138,11 +138,11 @@ export default function VulnerabilidadesView({
         })));
       }
       
-      toast.success(`Escaneo completado para el objetivo ${targetQuery}`);
+      notify.success(`Escaneo completado para el objetivo ${targetQuery}`);
     } catch (err: any) {
       clearInterval(interval);
       setStatusText('Error en el escaneo: ' + err.message);
-      toast.error('Fallo al ejecutar Nmap: ' + err.message);
+      notify.error('Fallo al ejecutar Nmap: ' + err.message);
     } finally {
       setTimeout(() => {
         setScanInProgress(false);

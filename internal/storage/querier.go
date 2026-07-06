@@ -46,6 +46,13 @@ type TopTalker struct {
 	Packets int64  `json:"packets"`
 }
 
+// TopPort represents traffic volume grouped by destination port.
+type TopPort struct {
+	Port    int   `json:"port"`
+	Bytes   int64 `json:"bytes"`
+	Packets int64 `json:"packets"`
+}
+
 // ProtocolShare represents one protocol's percentage of the total
 // traffic in the window. The sum across all shares in a single response
 // is approximately 100 (rounding may yield 99.99 or 100.01).
@@ -169,6 +176,7 @@ type Vulnerability struct {
 type Querier interface {
 	QueryDashboardSummary(ctx context.Context, since time.Time) (DashboardSummary, error)
 	QueryTopTalkers(ctx context.Context, since time.Time, limit int) ([]TopTalker, error)
+	QueryTopPorts(ctx context.Context, since time.Time, limit int) ([]TopPort, error)
 	QueryProtocolDistribution(ctx context.Context, since time.Time) ([]ProtocolShare, error)
 	QueryPackets(ctx context.Context, filter PacketFilter) ([]capture.PacketEvent, int, error)
 	QueryDevices(ctx context.Context, filter DeviceFilter) ([]Device, int, error)
@@ -192,6 +200,10 @@ type Querier interface {
 
 	SaveScanHistory(ctx context.Context, s ScanHistory) (int64, error)
 	GetScanHistory(ctx context.Context, limit int) ([]ScanHistory, error)
+
+	SaveReportHistory(ctx context.Context, r ReportHistory) (int64, error)
+	QueryTrafficTimeline(ctx context.Context, since, until time.Time) ([]TrafficPoint, error)
+	QueryTopConversations(ctx context.Context, since, until time.Time, limit int) ([]TopConversation, error)
 }
 
 // MockQuerier is a hand-rolled test double. Each method delegates to a
@@ -204,6 +216,7 @@ type Querier interface {
 type MockQuerier struct {
 	DashboardSummaryFn func(ctx context.Context, since time.Time) (DashboardSummary, error)
 	TopTalkersFn       func(ctx context.Context, since time.Time, limit int) ([]TopTalker, error)
+	TopPortsFn         func(ctx context.Context, since time.Time, limit int) ([]TopPort, error)
 	ProtocolDistFn     func(ctx context.Context, since time.Time) ([]ProtocolShare, error)
 	PacketsFn          func(ctx context.Context, filter PacketFilter) ([]capture.PacketEvent, int, error)
 	DevicesFn          func(ctx context.Context, filter DeviceFilter) ([]Device, int, error)
@@ -227,6 +240,10 @@ type MockQuerier struct {
 
 	SaveScanHistoryFn func(ctx context.Context, s ScanHistory) (int64, error)
 	GetScanHistoryFn  func(ctx context.Context, limit int) ([]ScanHistory, error)
+
+	SaveReportHistoryFn     func(ctx context.Context, r ReportHistory) (int64, error)
+	QueryTrafficTimelineFn  func(ctx context.Context, since, until time.Time) ([]TrafficPoint, error)
+	QueryTopConversationsFn func(ctx context.Context, since, until time.Time, limit int) ([]TopConversation, error)
 }
 
 // Compile-time check that MockQuerier implements Querier. If the
@@ -244,6 +261,13 @@ func (m *MockQuerier) QueryDashboardSummary(ctx context.Context, since time.Time
 func (m *MockQuerier) QueryTopTalkers(ctx context.Context, since time.Time, limit int) ([]TopTalker, error) {
 	if m.TopTalkersFn != nil {
 		return m.TopTalkersFn(ctx, since, limit)
+	}
+	return nil, nil
+}
+
+func (m *MockQuerier) QueryTopPorts(ctx context.Context, since time.Time, limit int) ([]TopPort, error) {
+	if m.TopPortsFn != nil {
+		return m.TopPortsFn(ctx, since, limit)
 	}
 	return nil, nil
 }
@@ -381,6 +405,27 @@ func (m *MockQuerier) GetScanHistory(ctx context.Context, limit int) ([]ScanHist
 	return nil, nil
 }
 
+func (m *MockQuerier) SaveReportHistory(ctx context.Context, r ReportHistory) (int64, error) {
+	if m.SaveReportHistoryFn != nil {
+		return m.SaveReportHistoryFn(ctx, r)
+	}
+	return 0, nil
+}
+
+func (m *MockQuerier) QueryTrafficTimeline(ctx context.Context, since, until time.Time) ([]TrafficPoint, error) {
+	if m.QueryTrafficTimelineFn != nil {
+		return m.QueryTrafficTimelineFn(ctx, since, until)
+	}
+	return nil, nil
+}
+
+func (m *MockQuerier) QueryTopConversations(ctx context.Context, since, until time.Time, limit int) ([]TopConversation, error) {
+	if m.QueryTopConversationsFn != nil {
+		return m.QueryTopConversationsFn(ctx, since, until, limit)
+	}
+	return nil, nil
+}
+
 // ErrorQuerier returns its Err from every method. main.go injects this
 // when storage initialization fails, so HTTP handlers never need a nil
 // check on the querier — every error maps cleanly to a 503.
@@ -419,7 +464,9 @@ func (e *ErrorQuerier) QueryDashboardSummary(ctx context.Context, since time.Tim
 func (e *ErrorQuerier) QueryTopTalkers(ctx context.Context, since time.Time, limit int) ([]TopTalker, error) {
 	return nil, e.err()
 }
-
+func (e *ErrorQuerier) QueryTopPorts(ctx context.Context, since time.Time, limit int) ([]TopPort, error) {
+	return nil, e.err()
+}
 func (e *ErrorQuerier) QueryProtocolDistribution(ctx context.Context, since time.Time) ([]ProtocolShare, error) {
 	return nil, e.err()
 }
@@ -493,5 +540,17 @@ func (e *ErrorQuerier) SaveScanHistory(ctx context.Context, s ScanHistory) (int6
 }
 
 func (e *ErrorQuerier) GetScanHistory(ctx context.Context, limit int) ([]ScanHistory, error) {
+	return nil, e.err()
+}
+
+func (e *ErrorQuerier) SaveReportHistory(ctx context.Context, r ReportHistory) (int64, error) {
+	return 0, e.err()
+}
+
+func (e *ErrorQuerier) QueryTrafficTimeline(ctx context.Context, since, until time.Time) ([]TrafficPoint, error) {
+	return nil, e.err()
+}
+
+func (e *ErrorQuerier) QueryTopConversations(ctx context.Context, since, until time.Time, limit int) ([]TopConversation, error) {
 	return nil, e.err()
 }
