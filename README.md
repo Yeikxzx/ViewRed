@@ -6,17 +6,18 @@
 
 **Network Detection & Response (NDR)** con IA local, para equipos chicos que gestionan redes de 20–100 dispositivos. Todo corre en tu máquina, sin enviar datos a la nube.
 
-> **Estado**: V1 en desarrollo. Plan 3 (core API + UI shell) completado. Trabajando en Plan 4 (ML engine + alerts). Ver [`docs/plans/`](./docs/plans/).
+> **Estado**: V1 en desarrollo. Plan 4 (ML engine + alerts + reports) completado. Ver [`docs/plans/`](./docs/plans/).
 
 ## Características principales
 
 - **Captura pasiva** de tráfico de red con gopacket (Npcap en Windows, AF_PACKET en Linux)
-- **Detección de anomalías** con Isolation Forest + Random Forest (ONNX Runtime, local)
+- **Detección avanzada de amenazas** con IA local y heurísticas (Fuerza Bruta, Escaneo/Recon, Inundación, Anomalías)
 - **Dashboard en tiempo real** vía SSE con métricas, top talkers y gráficos
 - **Escaneo de vulnerabilidades** con nmap (rápido, completo, detección de servicios)
 - **Asistente IA** con Qwen 2.5 3B vía Ollama, responde en español
 - **Topología de red** 2D interactiva con React Flow
 - **Alertas y notificaciones** con severidad, score de confianza y acciones
+- **Generación de reportes PDF** manuales y programados para auditorías de red
 - **Cross-platform**: funciona idéntico en Windows y Linux
 
 ## Quick start (dev)
@@ -145,6 +146,7 @@ scripts/              Scripts auxiliares (build, train, ...)
 | ML | ONNX Runtime (Isolation Forest + Random Forest) |
 | LLM | Qwen 2.5 3B vía Ollama |
 | Scanner | nmap |
+| Reportes | gofpdf (PDF) + cron |
 | Tiempo real | SSE |
 | Tests | testify (Go) + Vitest + Testing Library (React) |
 
