@@ -36,6 +36,7 @@ Var LinkPostgreSQL
 Var LinkNpcap
 Var LinkOllama
 Var LinkNmap
+Var LaunchCheckbox
 
 ; --- Pages ---
 !insertmacro MUI_PAGE_WELCOME
@@ -43,6 +44,11 @@ Var LinkNmap
 Page custom DepsPageShow DepsPageLeave
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
+
+; Custom finish page with launch checkbox
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW FinishPageShow
+!define MUI_PAGE_CUSTOMFUNCTION_LEAVE FinishPageLeave
 !insertmacro MUI_PAGE_FINISH
 
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -210,6 +216,19 @@ FunctionEnd
 
 Function OpenNmapURL
   ExecShell "open" "${URL_NMAP}"
+FunctionEnd
+
+Function FinishPageShow
+  ${NSD_CreateCheckbox} 120u 130u 100% 12u "Launch ViewRed after install"
+  Pop $LaunchCheckbox
+  ${NSD_Check} $LaunchCheckbox
+FunctionEnd
+
+Function FinishPageLeave
+  ${NSD_GetState} $LaunchCheckbox $0
+  ${If} $0 == ${BST_CHECKED}
+    Exec '"$INSTDIR\viewred-windows-amd64.exe"'
+  ${EndIf}
 FunctionEnd
 
 Section "Install"
