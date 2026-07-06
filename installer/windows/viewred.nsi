@@ -32,19 +32,10 @@ Var DepOllama
 Var DepNmap
 Var MissingCount
 Var Dialog
-Var LabelStatus
 Var LinkPostgreSQL
 Var LinkNpcap
 Var LinkOllama
 Var LinkNmap
-Var ImgOkPostgreSQL
-Var ImgFailPostgreSQL
-Var ImgOkNpcap
-Var ImgFailNpcap
-Var ImgOkOllama
-Var ImgFailOllama
-Var ImgOkNmap
-Var ImgFailNmap
 
 ; --- Pages ---
 !insertmacro MUI_PAGE_WELCOME
@@ -150,7 +141,7 @@ Function DepsPageShow
   ${If} $MissingCount == 0
     ${NSD_CreateLabel} 0 25u 100% 15u "All required dependencies detected. You're ready to install."
   ${Else}
-    ${NSD_CreateLabel} 0 25u 100% 15u "$MissingCount required dependenc${{If}} $MissingCount == 1{{Then}}y is{{Else}}ies are{{EndIf}} missing. Install them before running ViewRed."
+    ${NSD_CreateLabel} 0 25u 100% 30u "Some dependencies are missing. ViewRed needs them at runtime.$\nInstall them now or later — click the links below to download."
   ${EndIf}
   Pop $0
 
@@ -232,6 +223,11 @@ Section "Install"
 
     ; Config template
     File "..\..\config.example.yaml"
+
+    ; ONNX ML models
+    SetOutPath "$INSTDIR\models"
+    File /nonfatal /r "..\..\models\*.*"
+    SetOutPath "$INSTDIR"
 
     ; Create data directories
     CreateDirectory "$INSTDIR\data\pcaps"
