@@ -27,8 +27,8 @@ import (
 
 const (
 	checkInterval = 6 * time.Hour
-	repoOwner     = "viewred"
-	repoName      = "viewred"
+	repoOwner     = "Yeikxzx"
+	repoName      = "ViewRed"
 	tempSuffix    = ".new"
 )
 
