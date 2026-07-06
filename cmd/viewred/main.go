@@ -23,8 +23,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -511,6 +513,7 @@ func main() {
 		Handler: wire.Router,
 	}
 	log.Printf("ViewRed %s listening on http://%s", version.Version, addr)
+	openBrowser(addr)
 
 	// Start auto-updater in background. It checks for updates every 6 hours.
 	// On dev builds ("0.1.0-dev") the updater silently disables itself.
@@ -561,6 +564,23 @@ func main() {
 		EvalDone:    evalDone,
 	}); err != nil {
 		log.Printf("shutdown: %v", err)
+	}
+}
+
+// openBrowser opens the default browser at the ViewRed URL.
+func openBrowser(addr string) {
+	url := "http://" + addr
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	case "darwin":
+		cmd = exec.Command("open", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	if err := cmd.Start(); err != nil {
+		log.Printf("browser: %v", err)
 	}
 }
 
