@@ -1,6 +1,8 @@
 package api
 
 import (
+	"embed"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -69,8 +71,13 @@ type RouterDeps struct {
 	// enrichment and tests that don't care about DNS stay
 	// unbloated. The production wire-up always sets this.
 	Resolver   *resolver.Resolver
-	CORSConfig middleware.CORSConfig
+	CORSConfig  middleware.CORSConfig
 	RulesEngine *rules.Engine
+	// WebFS is the embedded web/dist filesystem. When non-zero,
+	// static assets are served from the embedded filesystem
+	// (production mode). The zero value triggers a filesystem
+	// fallback for development and tests.
+	WebFS embed.FS
 }
 
 // NewRouterWithDeps builds a router that wires every middleware and
@@ -93,7 +100,7 @@ func NewRouterWithDeps(deps RouterDeps) *gin.Engine {
 
 	// Mount web assets before global middlewares (like CORS) so static files
 	// don't get blocked by CORS origin checks when loaded via <script crossorigin>.
-	mountWebAssets(r)
+	mountWebAssetsFromEmbed(r, deps.WebFS)
 
 	r.Use(middleware.RequestID())
 	if len(deps.CORSConfig.AllowedOrigins) > 0 {
@@ -256,4 +263,46 @@ func findWebDist() string {
 		}
 	}
 	return ""
+}
+
+// mountWebAssetsFromEmbed wires static asset serving on r. When webFS
+// contains a "webdist" subdirectory (production binary with embedded
+// assets), it serves from the embedded filesystem. Otherwise it falls
+// back to the filesystem-based findWebDist() search (development mode
+// and tests).
+func mountWebAssetsFromEmbed(r *gin.Engine, webFS embed.FS) {
+	// Try the embedded filesystem first.
+	if distFS, err := fs.Sub(webFS, "webdist"); err == nil {
+		// Serve /assets/* from embedded dist/assets.
+		r.StaticFS("/assets", http.FS(distFS))
+		r.GET("/", func(c *gin.Context) {
+			data, _ := fs.ReadFile(distFS, "index.html")
+			c.Data(http.StatusOK, "text/html; charset=utf-8", data)
+		})
+		r.GET("/index.html", func(c *gin.Context) {
+			data, _ := fs.ReadFile(distFS, "index.html")
+			c.Data(http.StatusOK, "text/html; charset=utf-8", data)
+		})
+		r.NoRoute(func(c *gin.Context) {
+			// Skip serving index.html for /api paths — return
+			// JSON 404 instead so API consumers get a machine-
+			// readable response.
+			if len(c.Request.URL.Path) >= 4 && c.Request.URL.Path[:4] == "/api" {
+				c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+				return
+			}
+			// SPA fallback: serve index.html for any non-API
+			// route so client-side routing works.
+			data, readErr := fs.ReadFile(distFS, "index.html")
+			if readErr == nil && data != nil {
+				c.Data(http.StatusOK, "text/html; charset=utf-8", data)
+			} else {
+				c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			}
+		})
+		return
+	}
+
+	// Fallback: filesystem-based search (development mode).
+	mountWebAssets(r)
 }

@@ -1,0 +1,20 @@
+[Unit]
+Description=ViewRed NDR Service
+Documentation=https://github.com/viewred/viewred
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/viewred
+Restart=on-failure
+RestartSec=10
+User=viewred
+Group=viewred
+Environment=VIEWRED_CONFIG=/etc/viewred/config.yaml
+StandardOutput=journal
+StandardError=journal
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

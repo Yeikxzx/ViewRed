@@ -9,11 +9,12 @@ import (
 
 	"github.com/viewred/viewred/internal/capture"
 	"github.com/viewred/viewred/internal/rules"
+	"github.com/viewred/viewred/internal/version"
 )
 
 // TestVersion asserts the binary has a version string for --version output.
 func TestVersion(t *testing.T) {
-	if Version == "" {
+	if version.Version == "" {
 		t.Fatal("Version should not be empty")
 	}
 }

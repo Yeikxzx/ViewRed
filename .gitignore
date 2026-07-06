@@ -45,6 +45,12 @@ data/
 web/dist/
 web/node_modules/
 
+# Embed build artifacts (populated by make embed-prepare)
+cmd/viewred/webdist/*
+!cmd/viewred/webdist/.gitkeep
+cmd/viewred/migrations/*
+!cmd/viewred/migrations/.gitkeep
+
 # Tooling local state
 .atl/
 .worktrees/

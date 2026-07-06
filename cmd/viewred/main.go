@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -41,10 +42,9 @@ import (
 	"github.com/viewred/viewred/internal/sse"
 	"github.com/viewred/viewred/internal/storage"
 	"github.com/viewred/viewred/internal/reports"
+	"github.com/viewred/viewred/internal/updater"
+	"github.com/viewred/viewred/internal/version"
 )
-
-// Version is the semantic version of this build, set via -ldflags at build time.
-var Version = "0.1.0-dev"
 
 // defaultRules returns the built-in SSH/Telnet detection rules used when no
 // custom rules are configured or when storage is unavailable. The rules are
@@ -55,7 +55,7 @@ func defaultRules() []string {
 
 func main() {
 	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
-		fmt.Printf("viewred %s\n", Version)
+		fmt.Println(version.Get().String())
 		return
 	}
 
@@ -94,8 +94,17 @@ func main() {
 		// call in the select below is the primary path.
 		defer store.Close()
 		migrationsDir := findMigrationsDir()
-		if err := storage.RunMigrations(store, migrationsDir); err != nil {
-			log.Printf("storage migrations failed: %v", err)
+		// Try filesystem migrations first (development mode).
+		migrateErr := storage.RunMigrations(store, migrationsDir)
+		// If that failed (e.g., running from packaged binary where the
+		// filesystem path doesn't exist), try embedded migrations.
+		if migrateErr != nil {
+			if subFS, subErr := fs.Sub(migrationsFS, "migrations"); subErr == nil {
+				migrateErr = storage.RunMigrationsFromFS(store, subFS)
+			}
+		}
+		if migrateErr != nil {
+			log.Printf("storage migrations failed: %v", migrateErr)
 		}
 	}
 
@@ -501,7 +510,16 @@ func main() {
 		Addr:    addr,
 		Handler: wire.Router,
 	}
-	log.Printf("ViewRed %s listening on http://%s", Version, addr)
+	log.Printf("ViewRed %s listening on http://%s", version.Version, addr)
+
+	// Start auto-updater in background. It checks for updates every 6 hours.
+	// On dev builds ("0.1.0-dev") the updater silently disables itself.
+	up, upErr := updater.New()
+	if upErr != nil {
+		log.Printf("updater: %v", upErr)
+	} else {
+		go up.Run(ctx)
+	}
 
 	// Run server until ctx cancelled.
 	serverErr := make(chan error, 1)

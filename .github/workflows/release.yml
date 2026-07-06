@@ -1,0 +1,114 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Extract version and commit
+        id: version
+        run: |
+          echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          echo "COMMIT=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+
+      - name: Install web dependencies
+        run: cd web && pnpm install --frozen-lockfile
+
+      - name: Build web frontend
+        run: cd web && pnpm build
+
+      - name: Prepare embed assets
+        run: |
+          mkdir -p dist
+          cp -r web/dist cmd/viewred/webdist
+          cp -r internal/storage/migrations cmd/viewred/migrations
+
+      - name: Build Linux binary
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+          COMMIT: ${{ steps.version.outputs.COMMIT }}
+        run: |
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
+            -ldflags "-s -w -X github.com/viewred/viewred/internal/version.Version=${VERSION} -X github.com/viewred/viewred/internal/version.Commit=${COMMIT} -X github.com/viewred/viewred/internal/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o dist/viewred-linux-amd64 \
+            ./cmd/viewred
+
+      - name: Build Windows binary
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+          COMMIT: ${{ steps.version.outputs.COMMIT }}
+        run: |
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build \
+            -ldflags "-s -w -X github.com/viewred/viewred/internal/version.Version=${VERSION} -X github.com/viewred/viewred/internal/version.Commit=${COMMIT} -X github.com/viewred/viewred/internal/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o dist/viewred-windows-amd64.exe \
+            ./cmd/viewred
+
+      - name: Install nfpm
+        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+
+      - name: Package Linux (.deb)
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: nfpm package --config nfpm.yaml --packager deb --target dist/
+
+      - name: Package Linux (.rpm)
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: nfpm package --config nfpm.yaml --packager rpm --target dist/
+
+      - name: Generate checksums
+        run: cd dist && sha256sum viewred-* viewred_* > checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ViewRed v${{ steps.version.outputs.VERSION }}
+          body: |
+            ViewRed v${{ steps.version.outputs.VERSION }}
+
+            ### Installation
+
+            **Windows:** Download `viewred-windows-amd64.exe` and place it in your PATH. Requires [Npcap](https://npcap.com/) installed.
+            **Linux:** Download the `.deb` or `.rpm` package for your distribution.
+
+            ### Prerequisites
+            - PostgreSQL 15+ with TimescaleDB
+            - Ollama (for AI assistant)
+            - nmap (for vulnerability scanning)
+            - Npcap (Windows) / libpcap (Linux)
+
+            ### Checksums
+            See `checksums.txt` for SHA256 hashes of all artifacts.
+          files: |
+            dist/viewred-linux-amd64
+            dist/viewred-windows-amd64.exe
+            dist/viewred_*_amd64.deb
+            dist/viewred-*.x86_64.rpm
+            dist/checksums.txt
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.VERSION, 'beta') || contains(steps.version.outputs.VERSION, 'rc') || contains(steps.version.outputs.VERSION, 'alpha') }}

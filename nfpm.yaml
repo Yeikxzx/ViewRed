@@ -1,0 +1,37 @@
+name: viewred
+arch: amd64
+platform: linux
+version: ${VERSION}
+section: net
+priority: optional
+maintainer: ViewRed <hello@viewred.io>
+description: |
+  ViewRed — Network Detection & Response with local AI.
+  Passive traffic analysis, ML-based anomaly detection,
+  vulnerability scanning, and LLM-powered assistant,
+  all running 100% locally.
+vendor: ViewRed
+homepage: https://github.com/viewred/viewred
+license: MIT
+
+contents:
+  - src: dist/viewred-linux-amd64
+    dst: /usr/bin/viewred
+    file_info:
+      mode: 0755
+
+  - src: config.example.yaml
+    dst: /etc/viewred/config.example.yaml
+    type: config|noreplace
+
+  - src: installer/linux/viewred.service
+    dst: /usr/lib/systemd/system/viewred.service
+    packager: deb
+
+  - src: installer/linux/viewred.service
+    dst: /usr/lib/systemd/system/viewred.service
+    packager: rpm
+
+scripts:
+  postinstall: installer/linux/postinstall.sh
+  preremove: installer/linux/preremove.sh

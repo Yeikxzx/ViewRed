@@ -121,6 +121,7 @@ func newWireUpWithInterval(cfg *config.Config, rg *health.Registry, querier stor
 		GeoIP:    geoipSvc,
 		Resolver: dnsResolver,
 		RulesEngine: rulesEngine,
+		WebFS:       webDistFS,
 		// Wire CORS from config so the React UI (running on
 		// Vite at http://localhost:5173 by default) can
 		// reach the API. Without this field the router
