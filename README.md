@@ -6,7 +6,7 @@
 
 **Network Detection & Response (NDR)** con IA local, para equipos chicos que gestionan redes de 20–100 dispositivos. Todo corre en tu máquina, sin enviar datos a la nube.
 
-> **Estado**: V1 en desarrollo. Plan 4 (ML engine + alerts + reports) completado. Ver [`docs/plans/`](./docs/plans/).
+> **Estado**: V1 en desarrollo.
 
 ## Características principales
 
