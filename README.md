@@ -15,7 +15,7 @@
 - **Dashboard en tiempo real** vía SSE con métricas, top talkers y gráficos
 - **Escaneo de vulnerabilidades** con nmap (rápido, completo, detección de servicios)
 - **Asistente IA** con Qwen 2.5 3B vía Ollama, responde en español
-- **Topología de red** 2D interactiva con React Flow
+- **Topología de red** 2D interactiva
 - **Alertas y notificaciones** con severidad, score de confianza y acciones
 - **Generación de reportes PDF** manuales y programados para auditorías de red
 - **Cross-platform**: funciona idéntico en Windows y Linux
